@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Info - Dashboard Temps Réel</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <h1>Live Info</h1>
+        <div class="search">
+            <input id="search" type="search" placeholder="Chercher une ville…" autocomplete="off" aria-label="Chercher une ville">
+            <div class="results hidden" id="search-results"></div>
+        </div>
+        <button class="btn active" id="btn-gps" type="button">📍 Ma position</button>
+        <div class="loc-name" id="location-text">Localisation en cours...</div>
+    </header>
+
+    <main class="grid" id="dashboard">
+        <!-- Alertes & conseils (calculés à partir des données) -->
+        <section class="card wide" id="alerts-card">
+            <header class="card-header"><h2 class="card-title">🔔 Alertes & conseils</h2></header>
+            <div class="alerts" id="alerts"><div class="empty">En attente des données…</div></div>
+        </section>
+
+        <!-- Météo -->
+        <section class="card" id="weather-card">
+            <header class="card-header">
+                <h2 class="card-title">🌤️ Météo</h2>
+                <span class="status-badge status-pending" id="weather-status">Chargement</span>
+            </header>
+            <div class="weather-main">
+                <span class="weather-icon" id="weather-icon" aria-hidden="true">--</span>
+                <div>
+                    <div class="weather-temp mono" id="weather-temp">--°C</div>
+                    <div class="weather-desc" id="weather-desc">--</div>
+                </div>
+            </div>
+            <div class="metric-grid" id="weather-metrics"></div>
+            <div class="timestamp">Dernière MAJ: <span id="weather-time" class="mono">--</span></div>
+        </section>
+
+        <!-- Pluie imminente -->
+        <section class="card" id="nowcast-card">
+            <header class="card-header"><h2 class="card-title">🌧️ Pluie dans les 2 h</h2></header>
+            <div class="big-line" id="nowcast-summary">--</div>
+            <div class="nowcast" id="nowcast-bars" aria-hidden="true"></div>
+            <div class="nowcast-labels"><span>maintenant</span><span>+1 h</span><span>+2 h</span></div>
+        </section>
+
+        <!-- Prochaines heures -->
+        <section class="card wide" id="hourly-card">
+            <header class="card-header"><h2 class="card-title">🕒 Prochaines 24 h</h2></header>
+            <div class="chart" id="hourly-chart"></div>
+            <div class="hint">Courbe : température (°C). Barres : probabilité de pluie (%).</div>
+        </section>
+
+        <!-- 7 jours -->
+        <section class="card wide" id="daily-card">
+            <header class="card-header"><h2 class="card-title">📅 7 prochains jours</h2></header>
+            <div class="days" id="daily"></div>
+        </section>
+
+        <!-- Air & pollens -->
+        <section class="card" id="air-card">
+            <header class="card-header">
+                <h2 class="card-title">🌫️ Qualité de l'air</h2>
+                <span class="status-badge status-pending" id="air-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="air-metrics"></div>
+            <div class="hint" id="pollen-text"></div>
+            <div class="timestamp">Dernière MAJ: <span id="air-time" class="mono">--</span></div>
+        </section>
+
+        <!-- Soleil & Lune -->
+        <section class="card" id="sun-card">
+            <header class="card-header"><h2 class="card-title">🌅 Soleil & Lune</h2></header>
+            <div class="metric-grid" id="sun-metrics"></div>
+        </section>
+
+        <!-- GPS -->
+        <section class="card" id="gps-card">
+            <header class="card-header">
+                <h2 class="card-title">🧭 GPS / Trajet</h2>
+                <span class="status-badge status-pending" id="gps-status">En attente</span>
+            </header>
+            <div class="gps-grid">
+                <div class="gps-item"><div class="gps-value mono" id="gps-speed">--</div><div class="gps-label">Vitesse (km/h)</div></div>
+                <div class="gps-item"><div class="gps-value mono" id="gps-heading">--</div><div class="gps-label">Cap</div></div>
+            </div>
+            <div class="metric-grid" id="gps-metrics" style="margin-top:.75rem"></div>
+            <div class="timestamp">Dernière MAJ: <span id="gps-time" class="mono">--</span></div>
+        </section>
+
+        <!-- Carburants -->
+        <section class="card" id="fuel-card">
+            <header class="card-header">
+                <h2 class="card-title">⛽ Carburants les moins chers</h2>
+                <span class="status-badge status-pending" id="fuel-status">Chargement</span>
+            </header>
+            <div class="rows" id="fuel-list"></div>
+            <div class="hint" id="fuel-hint">France uniquement, autour de la position active.</div>
+        </section>
+
+        <!-- Séismes -->
+        <section class="card" id="quake-card">
+            <header class="card-header">
+                <h2 class="card-title">🌍 Séismes (24 h, M4.5+)</h2>
+                <span class="status-badge status-pending" id="quake-status">Chargement</span>
+            </header>
+            <div class="rows" id="quake-list"></div>
+        </section>
+
+        <!-- ISS -->
+        <section class="card" id="iss-card">
+            <header class="card-header">
+                <h2 class="card-title">🛰️ Station spatiale (ISS)</h2>
+                <span class="status-badge status-pending" id="iss-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="iss-metrics"></div>
+        </section>
+
+        <!-- Heures du monde -->
+        <section class="card" id="clocks-card">
+            <header class="card-header"><h2 class="card-title">🕰️ Heures dans le monde</h2></header>
+            <div class="metric-grid" id="clocks"></div>
+        </section>
+
+        <!-- Serveur (psutil) -->
+        <section class="card hidden" id="server-card">
+            <header class="card-header">
+                <h2 class="card-title">🖥️ Serveur</h2>
+                <span class="status-badge status-ok" id="server-status">Actif</span>
+            </header>
+            <div class="metric-grid" id="server-metrics"></div>
+            <div class="hint">Stats de la machine qui héberge l'app, pas de ton appareil.</div>
+        </section>
+
+        <!-- Appareil & réseau -->
+        <section class="card" id="device-card">
+            <header class="card-header"><h2 class="card-title">📱 Appareil & réseau</h2></header>
+            <div class="metric-grid" id="device-metrics"></div>
+        </section>
+
+        <!-- Speedtest -->
+        <section class="card" id="speedtest-card">
+            <header class="card-header">
+                <h2 class="card-title">⚡ Speedtest</h2>
+                <span class="status-badge status-pending" id="speedtest-status">Prêt</span>
+            </header>
+            <button class="speedtest-btn" id="speedtest-btn" type="button">
+                <span id="speedtest-btn-text">Lancer le test</span>
+                <div class="loader hidden" id="speedtest-loader"></div>
+            </button>
+            <div class="speedtest-result hidden" id="speedtest-result">
+                <div class="speedtest-item"><div class="speedtest-value mono" id="dl-speed">--</div><div class="speedtest-label">Download (Mbps)</div></div>
+                <div class="speedtest-item"><div class="speedtest-value mono" id="ul-speed">--</div><div class="speedtest-label">Upload (Mbps)</div></div>
+                <div class="speedtest-item"><div class="speedtest-value mono" id="ping-speed">--</div><div class="speedtest-label">Ping (ms)</div></div>
+            </div>
+            <div class="timestamp">Dernier test: <span id="speedtest-time" class="mono">--</span></div>
+        </section>
+
+        <!-- Batterie (si dispo) -->
+        <section class="card hidden" id="battery-card">
+            <header class="card-header"><h2 class="card-title">🔋 Batterie</h2></header>
+            <div class="metric-grid" id="battery-metrics"></div>
+        </section>
+
+        <!-- Orientation / mouvement (mobile) -->
+        <section class="card hidden" id="orientation-card">
+            <header class="card-header">
+                <h2 class="card-title">🔄 Orientation & mouvement</h2>
+                <span class="status-badge status-ok" id="orient-status">Actif</span>
+            </header>
+            <div class="metric-grid" id="orient-metrics"></div>
+        </section>
+    </main>
+</body>
+</html>
