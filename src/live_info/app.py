@@ -6,6 +6,7 @@ Open-Meteo, Nominatim, data.economie.gouv.fr, USGS, wheretheiss.at.
 import math
 import os
 import time
+from datetime import date
 
 import requests
 from flask import Flask, jsonify, render_template, request
@@ -29,6 +30,11 @@ FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
             "prix-des-carburants-en-france-flux-instantane-v2/records")
 USGS_QUAKES = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
 ISS_API = "https://api.wheretheiss.at/v1/satellites/25544"
+RAINVIEWER = "https://api.rainviewer.com/public/weather-maps.json"
+SWPC_KP = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+FX_API = "https://api.frankfurter.dev/v1/latest"
+COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
+HOLIDAYS = "https://calendrier.api.gouv.fr/jours-feries/metropole"
 
 FUELS = ["gazole", "e10", "sp95", "sp98", "e85", "gplc"]
 
@@ -93,8 +99,9 @@ def weather():
     return proxy(OPEN_METEO, {
         "latitude": c[0], "longitude": c[1],
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,"
-                   "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl",
-        "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility",
+                   "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,dew_point_2m",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility,pressure_msl",
+        "past_hours": 3,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
                  "precipitation_probability_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,daylight_duration",
         "minutely_15": "precipitation",
@@ -134,7 +141,7 @@ def reverse_geocode():
     if not c:
         return bad_coords()
     return proxy(NOMINATIM, {"lat": c[0], "lon": c[1], "format": "jsonv2",
-                             "accept-language": "fr", "zoom": 10}, ttl=86400)
+                             "accept-language": "fr", "zoom": 14}, ttl=86400)
 
 
 # ---------- carburants (France) ----------
@@ -192,6 +199,59 @@ def iss():
     return proxy(ISS_API, {}, ttl=5)
 
 
+# ---------- radar / météo spatiale / marchés / calendrier ----------
+@app.route("/api/radar")
+def radar():
+    return proxy(RAINVIEWER, {}, ttl=300)
+
+
+@app.route("/api/space")
+def space():
+    try:
+        rows = cached_get(SWPC_KP, {}, ttl=600)
+        if rows and isinstance(rows[0], list):  # ancien format : 1re ligne = en-têtes
+            rows = [dict(zip(rows[0], r)) for r in rows[1:]]
+        kp = []
+        for r in rows[-8:]:
+            v = r.get("Kp", r.get("kp_index"))
+            kp.append({"time": r.get("time_tag"), "kp": float(v)})
+        return jsonify({"kp": kp})
+    except (requests.RequestException, ValueError, TypeError, AttributeError) as e:
+        return jsonify({"error": str(e)}), 502
+
+
+@app.route("/api/markets")
+def markets():
+    out = {"fx": None, "crypto": None}
+    try:
+        out["fx"] = cached_get(FX_API, {"base": "EUR", "symbols": "USD,GBP,CHF,JPY"}, ttl=3600)["rates"]
+    except (requests.RequestException, ValueError, KeyError):
+        pass
+    try:
+        out["crypto"] = cached_get(COINGECKO, {"ids": "bitcoin,ethereum", "vs_currencies": "eur",
+                                               "include_24hr_change": "true"}, ttl=300)
+    except (requests.RequestException, ValueError):
+        pass
+    if out["fx"] is None and out["crypto"] is None:
+        return jsonify({"error": "Sources indisponibles"}), 502
+    return jsonify(out)
+
+
+@app.route("/api/holidays")
+def holidays():
+    today = date.today()
+    found = {}
+    for year in (today.year, today.year + 1):
+        try:
+            found.update(cached_get(f"{HOLIDAYS}/{year}.json", {}, ttl=86400))
+        except (requests.RequestException, ValueError):
+            pass
+    if not found:
+        return jsonify({"error": "Jours fériés indisponibles"}), 502
+    upcoming = sorted((d, n) for d, n in found.items() if d >= today.isoformat())[:4]
+    return jsonify({"holidays": [{"date": d, "name": n} for d, n in upcoming]})
+
+
 # ---------- stats de la machine qui héberge l'app ----------
 @app.route("/api/server")
 def server_stats():
@@ -213,7 +273,8 @@ def server_stats():
 
 
 def main():
-    app.run(host="127.0.0.1", port=5003)
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5003)))
+
 
 if __name__ == "__main__":
     main()

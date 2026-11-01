@@ -15,6 +15,7 @@ const setText = (id, text) => { const el = document.getElementById(id); if (el) 
 const fmtTime = (d = new Date()) => d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const hm = (iso) => iso.slice(11, 16);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uniq = (arr) => [...new Set(arr.filter(Boolean))];
 const cardinal = (deg) => ['N', 'NE', 'E', 'SE', 'S', 'SO', 'O', 'NO'][round(deg / 45) % 8];
 const ago = (ms) => { const m = round((Date.now() - ms) / 60000); return m < 60 ? `il y a ${m} min` : `il y a ${round(m / 60)} h`; };
 const dur = (s) => {
@@ -78,8 +79,9 @@ const state = {
     mode: 'gps',          // 'gps' = position réelle, 'manual' = ville cherchée
     locSeq: 0,            // invalide les réponses d'une ancienne position
     last: { t: 0, lat: null, lon: null },
-    gpsPos: null,
+    gpsPos: null, acc: null,
     weather: null, air: null, pollen: {}, quakes: [], rainMsg: null,
+    kp: null, holidays: [], pTrend: null,
 };
 const MANUAL_KEY = 'live-info:manual';
 
@@ -87,15 +89,18 @@ const MANUAL_KEY = 'live-info:manual';
 function setLocation(lat, lon, name) {
     state.lat = lat; state.lon = lon;
     state.locSeq++;
-    state.last = { t: Date.now(), lat, lon };
+    state.last = { t: Date.now(), lat, lon, acc: state.mode === 'gps' ? state.acc : null };
     if (name) setText('location-text', `📍 ${name}`); else loadPlace();
     loadWeather(); loadAir(); loadFuel();
     renderQuakes();
+    updateMapLocation();
 }
 
-function shouldRefresh(lat, lon) {
+function shouldRefresh(lat, lon, acc) {
     const l = state.last;
-    return l.lat === null || haversineKm(l.lat, l.lon, lat, lon) > 0.5 || Date.now() - l.t > 10 * 60 * 1000;
+    const moved = l.lat === null || haversineKm(l.lat, l.lon, lat, lon) > 0.5 || Date.now() - l.t > 10 * 60 * 1000;
+    const moreAccurate = acc != null && l.acc != null && acc < l.acc / 2 && acc < 2000; // un fix précis remplace un fix grossier (Wi-Fi/IP)
+    return moved || moreAccurate;
 }
 
 async function loadPlace() {
@@ -103,8 +108,11 @@ async function loadPlace() {
     try {
         const a = (await api('reverse-geocode', { lat: state.lat, lon: state.lon })).address || {};
         if (seq !== state.locSeq) return;
-        const parts = [a.city || a.town || a.village || a.hamlet || a.municipality, a.state, a.country].filter(Boolean);
-        setText('location-text', parts.length ? `📍 ${parts.join(', ')}` : '📍 Position détectée');
+        const town = a.city || a.town || a.village || a.municipality || a.hamlet || a.suburb;
+        const place = town ? `${a.postcode ? `${a.postcode.split(';')[0]} ` : ''}${town}` : null;
+        const parts = uniq([place, a.county, a.state, a.country]); // county = département en France
+        const approx = state.mode === 'gps' && state.acc > 3000 ? ' (approx.)' : '';
+        setText('location-text', parts.length ? `📍 ${parts.join(', ')}${approx}` : '📍 Position détectée');
     } catch (e) {
         console.error('Reverse geocode:', e);
         setText('location-text', `📍 ${state.lat.toFixed(3)}, ${state.lon.toFixed(3)}`);
@@ -121,8 +129,9 @@ function initSearch() {
     const pick = (i) => {
         const r = found[i];
         if (!r) return;
-        const name = [r.name, r.admin1, r.country].filter(Boolean).join(', ');
+        const name = uniq([r.name, r.admin2, r.admin1, r.country]).join(', ');
         state.mode = 'manual';
+        state.acc = null;
         setGpsButton(false);
         try { localStorage.setItem(MANUAL_KEY, JSON.stringify({ lat: r.latitude, lon: r.longitude, name })); } catch { /* stockage indisponible */ }
         input.value = '';
@@ -138,7 +147,7 @@ function initSearch() {
             try {
                 found = (await api('geocode', { q })).results || [];
                 box.innerHTML = found.length
-                    ? found.map((r, i) => `<button type="button" data-i="${i}">${esc(r.name)} <small>${esc([r.admin1, r.country].filter(Boolean).join(', '))}</small></button>`).join('')
+                    ? found.map((r, i) => `<button type="button" data-i="${i}">${esc(r.name)} <small>${esc(uniq([r.admin2, r.admin1, r.country]).join(', '))}</small></button>`).join('')
                     : '<button type="button" disabled>Aucun résultat</button>';
                 show(box);
             } catch (e) { console.error('Geocode:', e); close(); }
@@ -202,6 +211,17 @@ function renderWeather(d) {
         ['Visibilité', vis == null ? '--' : `${(vis / 1000).toFixed(vis >= 10000 ? 0 : 1)} km`],
         ['Indice UV', uv == null ? '--' : uv.toFixed(1)],
     ]);
+    const dl = d.daily, p = h.pressure_msl;
+    state.pTrend = p && hi >= 3 && p[hi] != null && p[hi - 3] != null ? p[hi] - p[hi - 3] : null;
+    const pt = state.pTrend;
+    metrics('today-metrics', [
+        ['Min / Max', `${round(dl.temperature_2m_min[0])}° / ${round(dl.temperature_2m_max[0])}°`],
+        ['Pluie du jour', `${dl.precipitation_sum[0]} mm`],
+        ['Proba pluie', `${dl.precipitation_probability_max[0] ?? 0}%`],
+        ['Rafales max', `${round(dl.wind_gusts_10m_max[0])} km/h`],
+        ['Point de rosée', c.dew_point_2m == null ? '--' : `${round(c.dew_point_2m)}°C`],
+        ['Tendance pression', pt == null ? '--' : `${pt > 1 ? '↗' : pt < -1 ? '↘' : '→'} ${pt > 0 ? '+' : ''}${pt.toFixed(1)} hPa/3h`],
+    ]);
     renderNowcast(d);
     renderHourly(d, hi);
     renderDaily(d);
@@ -261,7 +281,7 @@ function moonPhase(date = new Date()) {
     const synodic = 29.530588853, ref = Date.UTC(2000, 0, 6, 18, 14); // nouvelle lune de référence
     const age = (((date - ref) / 86400000) % synodic + synodic) % synodic;
     const phases = [['Nouvelle lune', '🌑'], ['Premier croissant', '🌒'], ['Premier quartier', '🌓'], ['Gibbeuse croissante', '🌔'],
-    ['Pleine lune', '🌕'], ['Gibbeuse décroissante', '🌖'], ['Dernier quartier', '🌗'], ['Dernier croissant', '🌘']];
+        ['Pleine lune', '🌕'], ['Gibbeuse décroissante', '🌖'], ['Dernier quartier', '🌗'], ['Dernier croissant', '🌘']];
     const [name, icon] = phases[Math.floor((age / synodic) * 8 + 0.5) % 8];
     return { name, icon, age, illum: round(((1 - Math.cos(2 * Math.PI * age / synodic)) / 2) * 100) };
 }
@@ -353,6 +373,11 @@ async function loadQuakes() {
 
 function renderQuakes() {
     const list = $('#quake-list');
+    if (mapState.quakes) {
+        mapState.quakes.clearLayers();
+        state.quakes.forEach((q) => L.circleMarker([q.lat, q.lon], { radius: Math.max(4, q.mag * 2.2), color: '#ef4444', weight: 1, fillOpacity: 0.4 })
+            .bindTooltip(esc(`M${Number(q.mag).toFixed(1)} · ${q.place}`)).addTo(mapState.quakes));
+    }
     if (!state.quakes.length) return;
     list.innerHTML = state.quakes.slice(0, 6).map((q) => {
         const km = state.lat === null ? null : round(haversineKm(state.lat, state.lon, q.lat, q.lon));
@@ -365,6 +390,7 @@ function renderQuakes() {
 async function loadIss() {
     try {
         const d = await api('iss');
+        mapState.iss?.setLatLng([d.latitude, d.longitude]);
         const km = state.lat === null ? '--' : `${round(haversineKm(state.lat, state.lon, d.latitude, d.longitude))} km`;
         const vis = { daylight: 'Éclairée', eclipsed: "Dans l'ombre", visible: 'Visible' }[d.visibility] || d.visibility;
         metrics('iss-metrics', [
@@ -415,12 +441,16 @@ function startGPS() {
         return setText('location-text', 'Géolocalisation non supportée par ce navigateur');
     }
     if (watchId !== null) return;
+    // 1) fix rapide (Wi-Fi/IP) pour afficher quelque chose tout de suite ; 2) suivi haute précision qui l'affine
+    navigator.geolocation.getCurrentPosition((p) => { if (!state.gpsPos) onGpsSuccess(p); }, () => {},
+        { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
     watchId = navigator.geolocation.watchPosition(onGpsSuccess, onGpsError, { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 });
 }
 
 function onGpsSuccess(pos) {
     const { latitude: lat, longitude: lon, altitude, accuracy, speed, heading } = pos.coords;
     state.gpsPos = { lat, lon };
+    state.acc = accuracy;
     const kmh = speed == null ? null : speed * 3.6;
 
     if (accuracy <= 50) {
@@ -440,9 +470,9 @@ function onGpsSuccess(pos) {
         ['Distance', `${trip.dist.toFixed(2)} km`], ['Vitesse max', `${trip.max.toFixed(0)} km/h`],
         ['Vitesse moy.', hours > 0.005 ? `${(trip.dist / hours).toFixed(1)} km/h` : '--'], ['Position', `${lat.toFixed(4)}, ${lon.toFixed(4)}`],
     ]);
-    setStatus('gps', 'ok', 'Actif');
+    setStatus('gps', accuracy > 1000 ? 'warn' : 'ok', accuracy > 1000 ? `Approx. ±${(accuracy / 1000).toFixed(1)} km` : `±${round(accuracy)} m`);
 
-    if (state.mode === 'gps' && shouldRefresh(lat, lon)) setLocation(lat, lon);
+    if (state.mode === 'gps' && shouldRefresh(lat, lon, accuracy)) setLocation(lat, lon);
 }
 
 function onGpsError(err) {
@@ -482,6 +512,10 @@ function renderAlerts() {
         const q = state.quakes.find((q) => q.mag >= 5 && haversineKm(state.lat, state.lon, q.lat, q.lon) < 1000);
         if (q) items.push(['warn', `Séisme M${q.mag.toFixed(1)} à ${round(haversineKm(state.lat, state.lon, q.lat, q.lon))} km (${ago(q.time)}).`]);
     }
+    if (state.pTrend != null && state.pTrend <= -6) items.push(['warn', `Pression en chute rapide (${state.pTrend.toFixed(1)} hPa en 3 h) : dégradation probable.`]);
+    if (state.kp >= 5) items.push(['info', `Tempête géomagnétique (Kp ${state.kp.toFixed(1)}) : aurores possibles au nord de l'Europe.`]);
+    const h0 = state.holidays[0];
+    if (h0 && daysUntil(h0.date) <= 1) items.push(['info', `${daysUntil(h0.date) === 0 ? "Aujourd'hui" : 'Demain'} : ${h0.name} (jour férié).`]);
     if (!items.length) items.push(['ok', '✅ Rien à signaler pour le moment.']);
     $('#alerts').innerHTML = items.map(([k, m]) => `<div class="alert ${k}">${esc(m)}</div>`).join('');
 }
@@ -632,7 +666,7 @@ async function initBattery() {
             if (b.charging && Number.isFinite(b.chargingTime)) time = b.chargingTime ? `${t(b.chargingTime)} avant 100%` : 'Chargée';
             else if (!b.charging && Number.isFinite(b.dischargingTime)) time = `${t(b.dischargingTime)} restantes`;
             metrics('battery-metrics', [['Niveau', `${level}%`, level, level < 20 ? 'progress-gpu' : 'progress-cpu'],
-            ['État', b.charging ? '🔌 En charge' : '🔋 Sur batterie'], ['Autonomie', time]]);
+                ['État', b.charging ? '🔌 En charge' : '🔋 Sur batterie'], ['Autonomie', time]]);
         };
         show($('#battery-card'));
         render();
@@ -646,7 +680,7 @@ const motion = { a: null, b: null, g: null, x: null, y: null, z: null };
 function renderMotion() {
     const f = (v, n = 1) => (v == null ? '--' : v.toFixed(n));
     metrics('orient-metrics', [['Alpha (Z)', `${f(motion.a)}°`], ['Beta (X)', `${f(motion.b)}°`], ['Gamma (Y)', `${f(motion.g)}°`],
-    ['Accél. X', `${f(motion.x, 2)} m/s²`], ['Accél. Y', `${f(motion.y, 2)} m/s²`], ['Accél. Z', `${f(motion.z, 2)} m/s²`]]);
+        ['Accél. X', `${f(motion.x, 2)} m/s²`], ['Accél. Y', `${f(motion.y, 2)} m/s²`], ['Accél. Z', `${f(motion.z, 2)} m/s²`]]);
 }
 
 function startMotion() {
@@ -678,6 +712,181 @@ function initOrientation() {
     startMotion();
 }
 
+// ============ CARTE LIVE (Leaflet) ============
+const mapState = { map: null, you: null, iss: null, quakes: null, radar: null, frames: [], host: '', playing: null };
+const radarUrl = (f) => `${mapState.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`;
+const clock = (unix) => new Date(unix * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+
+function initMap() {
+    if (typeof L === 'undefined') return setStatus('map', 'error', 'Leaflet indisponible');
+    const m = mapState.map = L.map('map', { minZoom: 2, maxZoom: 10, worldCopyJump: true }).setView([46.6, 2.4], 5);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        subdomains: 'abcd', maxZoom: 19,
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+    }).addTo(m);
+    mapState.quakes = L.layerGroup().addTo(m);
+    mapState.iss = L.marker([0, 0], {
+        icon: L.divIcon({ className: 'iss-icon', html: '🛰️', iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 1000,
+    }).bindTooltip('ISS').addTo(m);
+    $('#radar-toggle').addEventListener('click', toggleRadar);
+    $('#radar-play').addEventListener('click', playRadar);
+    setTimeout(() => m.invalidateSize(), 300);
+    setStatus('map', 'ok', 'Live');
+    loadRadar();
+    renderQuakes();
+    updateMapLocation();
+}
+
+function updateMapLocation() {
+    const { map } = mapState;
+    if (!map || state.lat === null) return;
+    const pos = [state.lat, state.lon];
+    if (mapState.you) mapState.you.setLatLng(pos);
+    else mapState.you = L.circleMarker(pos, { radius: 8, color: '#00d4aa', fillColor: '#00d4aa', fillOpacity: 0.6, weight: 2 }).bindTooltip('Toi').addTo(map);
+    map.setView(pos, 6); // le radar s'arrête au zoom 7
+}
+
+async function loadRadar() {
+    try {
+        const d = await api('radar');
+        const past = d.radar?.past || [];
+        if (!past.length) throw new Error('aucune image radar');
+        mapState.host = d.host; mapState.frames = past;
+        if (mapState.playing) return;
+        const last = past[past.length - 1];
+        if (mapState.radar) mapState.radar.setUrl(radarUrl(last));
+        else {
+            mapState.radar = L.tileLayer(radarUrl(last), { opacity: 0.65, maxNativeZoom: 7, maxZoom: 10 });
+            if ($('#radar-toggle').classList.contains('active')) mapState.radar.addTo(mapState.map);
+        }
+        setText('radar-time', `Radar : ${clock(last.time)}`);
+    } catch (e) {
+        console.error('Radar:', e);
+        setText('radar-time', 'Radar indisponible');
+    }
+}
+
+function toggleRadar() {
+    const { radar, map } = mapState;
+    if (!radar) return;
+    const on = !map.hasLayer(radar);
+    if (on) radar.addTo(map); else radar.remove();
+    $('#radar-toggle').classList.toggle('active', on);
+}
+
+function playRadar() {
+    const s = mapState, btn = $('#radar-play');
+    if (!s.radar) return;
+    const stop = () => {
+        clearInterval(s.playing); s.playing = null; btn.textContent = '▶ Animer 2 h';
+        const last = s.frames[s.frames.length - 1];
+        s.radar.setUrl(radarUrl(last)); setText('radar-time', `Radar : ${clock(last.time)}`);
+    };
+    if (s.playing) return stop();
+    if (!s.map.hasLayer(s.radar)) { s.radar.addTo(s.map); $('#radar-toggle').classList.add('active'); }
+    // 1 image sur 2 pour rester sous la limite de requêtes de RainViewer
+    const frames = s.frames.filter((_, i) => (s.frames.length - 1 - i) % 2 === 0);
+    let i = 0;
+    btn.textContent = '⏹ Stop';
+    s.playing = setInterval(() => {
+        const f = frames[i++];
+        s.radar.setUrl(radarUrl(f)); setText('radar-time', `Radar : ${clock(f.time)}`);
+        if (i >= frames.length) { clearInterval(s.playing); setTimeout(() => { if (s.playing) stop(); }, 1500); }
+    }, 900);
+}
+
+// ============ CALENDRIER & JOURS FÉRIÉS ============
+function isoWeek(d) {
+    const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+    return Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7);
+}
+
+function daysUntil(dateStr) {
+    const n = new Date();
+    return round((new Date(`${dateStr}T00:00`) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
+}
+
+function renderCalendar() {
+    const now = new Date(), y = now.getFullYear();
+    const total = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0 ? 366 : 365;
+    const doy = Math.floor((Date.UTC(y, now.getMonth(), now.getDate()) - Date.UTC(y, 0, 0)) / 864e5);
+    setText('date-big', now.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }));
+    metrics('date-metrics', [
+        ['Semaine', `n°${isoWeek(now)}`], ['Jour de l\'année', `${doy} / ${total}`],
+        ['Année écoulée', `${((doy / total) * 100).toFixed(0)}%`, (doy / total) * 100, 'progress-ram'], ['Jours restants', total - doy],
+    ]);
+    if (state.holidays.length) renderHolidays();
+}
+
+function renderHolidays() {
+    $('#holiday-list').innerHTML = state.holidays.map((h) => {
+        const n = daysUntil(h.date);
+        const when = n === 0 ? "Aujourd'hui" : n === 1 ? 'Demain' : `J-${n}`;
+        const day = new Date(`${h.date}T12:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+        return `<div class="row"><div>${esc(h.name)}<small>${esc(day)}</small></div><span class="mono">${when}</span></div>`;
+    }).join('');
+}
+
+async function loadHolidays() {
+    try {
+        state.holidays = (await api('holidays')).holidays;
+        renderHolidays();
+    } catch (e) {
+        console.error('Holidays:', e);
+        $('#holiday-list').innerHTML = '<div class="empty">Jours fériés indisponibles.</div>';
+    }
+    renderAlerts();
+}
+
+// ============ MÉTÉO SPATIALE (Kp) ============
+const KP_LABELS = { 4: 'Actif', 5: 'Tempête G1', 6: 'Tempête G2', 7: 'Tempête G3', 8: 'Tempête G4', 9: 'Tempête G5' };
+
+async function loadSpace() {
+    try {
+        const list = (await api('space')).kp;
+        const kp = list[list.length - 1].kp, max = Math.max(...list.map((r) => r.kp));
+        state.kp = kp;
+        const label = kp < 3.5 ? 'Calme' : KP_LABELS[Math.min(9, round(kp))];
+        const t = list[list.length - 1].time;
+        metrics('space-metrics', [
+            ['Kp actuel', kp.toFixed(1), (kp / 9) * 100, kp >= 5 ? 'progress-gpu' : 'progress-cpu'],
+            ['État', label], ['Max sur 24 h', max.toFixed(1)],
+            ['Mesure', t ? ago(Date.parse(t.endsWith('Z') ? t : `${t}Z`)) : '--'],
+        ]);
+        setText('space-hint', kp >= 7 ? "Aurores possibles à basse latitude (jusqu'en France)."
+            : kp >= 5 ? "Aurores probables en Scandinavie, possibles plus au sud."
+            : 'Activité calme : aurores limitées aux régions polaires.');
+        setStatus('space', kp >= 7 ? 'error' : kp >= 5 ? 'warn' : 'ok', label);
+    } catch (e) {
+        console.error('Space:', e);
+        setStatus('space', 'error', 'Erreur');
+    }
+    renderAlerts();
+}
+
+// ============ MARCHÉS ============
+async function loadMarkets() {
+    try {
+        const d = await api('markets');
+        const items = [];
+        if (d.fx) for (const [cur, rate] of Object.entries(d.fx)) items.push([`1 € en ${cur}`, rate.toFixed(cur === 'JPY' ? 2 : 4)]);
+        if (d.crypto) {
+            for (const [id, name] of [['bitcoin', 'Bitcoin'], ['ethereum', 'Ethereum']]) {
+                const c = d.crypto[id];
+                if (!c) continue;
+                const chg = c.eur_24h_change;
+                items.push([name, `${round(c.eur).toLocaleString('fr-FR')} €${chg == null ? '' : ` (${chg >= 0 ? '+' : ''}${chg.toFixed(1)}%)`}`]);
+            }
+        }
+        metrics('markets-metrics', items);
+        setStatus('markets', d.fx && d.crypto ? 'ok' : 'warn', d.fx && d.crypto ? 'OK' : 'Partiel');
+    } catch (e) {
+        console.error('Markets:', e);
+        setStatus('markets', 'error', 'Erreur');
+    }
+}
+
 // ============ INITIALISATION ============
 function init() {
     initDevice();
@@ -702,6 +911,11 @@ function init() {
     loadServer(); serverTimer = every(3000, loadServer);
     every(10 * 60e3, () => { loadWeather(); loadFuel(); });
     every(30 * 60e3, loadAir);
+    initMap(); every(10 * 60e3, loadRadar);
+    renderCalendar(); every(5 * 60e3, renderCalendar);
+    loadHolidays(); every(6 * 3600e3, loadHolidays);
+    loadSpace(); every(15 * 60e3, loadSpace);
+    loadMarkets(); every(5 * 60e3, loadMarkets);
     renderAlerts();
 }
 

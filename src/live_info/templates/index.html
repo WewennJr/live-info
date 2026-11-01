@@ -7,7 +7,9 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </head>
 <body>
@@ -51,6 +53,32 @@
             <div class="big-line" id="nowcast-summary">--</div>
             <div class="nowcast" id="nowcast-bars" aria-hidden="true"></div>
             <div class="nowcast-labels"><span>maintenant</span><span>+1 h</span><span>+2 h</span></div>
+            <div class="sub">Aujourd'hui</div>
+            <div class="metric-grid" id="today-metrics"></div>
+        </section>
+
+        <!-- Carte live (radar, ISS, séismes) -->
+        <section class="card tall" id="map-card">
+            <header class="card-header">
+                <h2 class="card-title">🗺️ Carte live</h2>
+                <span class="status-badge status-pending" id="map-status">Chargement</span>
+            </header>
+            <div id="map" class="map" role="application" aria-label="Carte : radar de pluie, ISS et séismes"></div>
+            <div class="map-bar">
+                <button class="btn active" id="radar-toggle" type="button">🌧️ Radar</button>
+                <button class="btn" id="radar-play" type="button">▶ Animer 2 h</button>
+                <span class="hint" id="radar-time">--</span>
+            </div>
+            <div class="hint">🟢 toi · 🛰️ ISS · 🔴 séismes · Radar : <a href="https://www.rainviewer.com" target="_blank" rel="noopener">Weather data by Rain Viewer</a></div>
+        </section>
+
+        <!-- Calendrier -->
+        <section class="card tall" id="calendar-card">
+            <header class="card-header"><h2 class="card-title">📅 Aujourd'hui</h2></header>
+            <div class="date-big" id="date-big">--</div>
+            <div class="metric-grid" id="date-metrics"></div>
+            <div class="sub">Prochains jours fériés (France)</div>
+            <div class="rows" id="holiday-list"><div class="empty">Chargement…</div></div>
         </section>
 
         <!-- Prochaines heures -->
@@ -123,6 +151,26 @@
                 <span class="status-badge status-pending" id="iss-status">Chargement</span>
             </header>
             <div class="metric-grid" id="iss-metrics"></div>
+        </section>
+
+        <!-- Météo spatiale -->
+        <section class="card" id="space-card">
+            <header class="card-header">
+                <h2 class="card-title">🌌 Météo spatiale</h2>
+                <span class="status-badge status-pending" id="space-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="space-metrics"></div>
+            <div class="hint" id="space-hint"></div>
+        </section>
+
+        <!-- Marchés -->
+        <section class="card" id="markets-card">
+            <header class="card-header">
+                <h2 class="card-title">💶 Marchés</h2>
+                <span class="status-badge status-pending" id="markets-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="markets-metrics"></div>
+            <div class="hint">Taux BCE (quotidiens) et cryptos CoinGecko, à titre informatif.</div>
         </section>
 
         <!-- Heures du monde -->
