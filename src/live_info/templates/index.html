@@ -94,6 +94,17 @@
             <div class="days" id="daily"></div>
         </section>
 
+        <!-- Jours fériés dans le monde -->
+        <section class="card wide" id="world-card">
+            <header class="card-header">
+                <h2 class="card-title">🌍 Jours fériés dans le monde</h2>
+                <span class="status-badge status-pending" id="world-status">Chargement</span>
+            </header>
+            <div class="chips" id="country-chips" role="group" aria-label="Pays affichés"></div>
+            <div class="world-grid" id="world-list"></div>
+            <div class="hint">Jours fériés nationaux officiels (Nager.Date). Clique sur un pays pour l'afficher ou le masquer.</div>
+        </section>
+
         <!-- Air & pollens -->
         <section class="card" id="air-card">
             <header class="card-header">
@@ -109,6 +120,16 @@
         <section class="card" id="sun-card">
             <header class="card-header"><h2 class="card-title">🌅 Soleil & Lune</h2></header>
             <div class="metric-grid" id="sun-metrics"></div>
+        </section>
+
+        <!-- Mer (masquée loin des côtes) -->
+        <section class="card hidden" id="marine-card">
+            <header class="card-header">
+                <h2 class="card-title">🌊 Mer & vagues</h2>
+                <span class="status-badge status-pending" id="marine-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="marine-metrics"></div>
+            <div class="hint">Modèle global : indicatif, pas un bulletin marine officiel.</div>
         </section>
 
         <!-- GPS -->
@@ -173,20 +194,45 @@
             <div class="hint">Taux BCE (quotidiens) et cryptos CoinGecko, à titre informatif.</div>
         </section>
 
+        <!-- Électricité en France -->
+        <section class="card" id="power-card">
+            <header class="card-header">
+                <h2 class="card-title">⚡ Électricité en France</h2>
+                <span class="status-badge status-pending" id="power-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="power-metrics"></div>
+            <div class="hint" id="power-hint"></div>
+        </section>
+
+        <!-- Vacances scolaires -->
+        <section class="card" id="school-card">
+            <header class="card-header"><h2 class="card-title">🎓 Vacances scolaires</h2></header>
+            <div class="rows" id="school-list"><div class="empty">Chargement…</div></div>
+            <div class="hint">Zones A, B, C (métropole). Départ après la classe, reprise le matin de la date de fin.</div>
+        </section>
+
+        <!-- Jours importants -->
+        <section class="card" id="obs-card">
+            <header class="card-header"><h2 class="card-title">🎉 Jours importants</h2></header>
+            <div class="rows" id="obs-list"></div>
+            <div class="hint">Fêtes et événements non fériés (France, UK, US) : changement d'heure, Black Friday…</div>
+        </section>
+
         <!-- Heures du monde -->
         <section class="card" id="clocks-card">
             <header class="card-header"><h2 class="card-title">🕰️ Heures dans le monde</h2></header>
             <div class="metric-grid" id="clocks"></div>
         </section>
 
-        <!-- Serveur (psutil) -->
-        <section class="card hidden" id="server-card">
+        <!-- Performances de l'appareil (mesurées dans le navigateur) -->
+        <section class="card" id="perf-card">
             <header class="card-header">
-                <h2 class="card-title">🖥️ Serveur</h2>
-                <span class="status-badge status-ok" id="server-status">Actif</span>
+                <h2 class="card-title">⚙️ Performances de ton appareil</h2>
+                <span class="status-badge status-ok" id="perf-status">Live</span>
             </header>
-            <div class="metric-grid" id="server-metrics"></div>
-            <div class="hint">Stats de la machine qui héberge l'app, pas de ton appareil.</div>
+            <div class="metric-grid" id="perf-metrics"></div>
+            <button class="btn" id="bench-btn" type="button" style="margin-top:.75rem">Tester la puissance du CPU</button>
+            <div class="hint">Un navigateur ne peut pas lire l'usage réel du CPU/RAM : ce sont des mesures faites sur ton appareil (FPS, latence, benchmark).</div>
         </section>
 
         <!-- Appareil & réseau -->

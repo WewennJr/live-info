@@ -1,21 +1,17 @@
-"""Live Info - dashboard temps réel (Flask).
+"""Live Info - real-time dashboard (Flask).
 
-Le serveur sert de proxy avec cache vers des APIs publiques sans clé :
-Open-Meteo, Nominatim, data.economie.gouv.fr, USGS, wheretheiss.at.
+The server is a cached proxy to public APIs that need no key.
 """
 import math
 import os
+import re
 import time
-from datetime import date
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 import requests
 from flask import Flask, jsonify, render_template, request
-
-try:
-    import psutil
-    psutil.cpu_percent()  # amorce : le 1er appel renvoie toujours 0.0
-except ImportError:
-    psutil = None
 
 app = Flask(__name__)
 
@@ -35,6 +31,11 @@ SWPC_KP = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
 FX_API = "https://api.frankfurter.dev/v1/latest"
 COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
 HOLIDAYS = "https://calendrier.api.gouv.fr/jours-feries/metropole"
+MARINE = "https://marine-api.open-meteo.com/v1/marine"
+ECO2MIX = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records"
+SCHOOL = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records"
+NAGER = "https://date.nager.at/api/v3"
+PARIS = ZoneInfo("Europe/Paris")
 
 FUELS = ["gazole", "e10", "sp95", "sp98", "e85", "gplc"]
 
@@ -103,7 +104,7 @@ def weather():
         "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility,pressure_msl",
         "past_hours": 3,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
-                 "precipitation_probability_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,daylight_duration",
+                 "precipitation_probability_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,daylight_duration,sunshine_duration",
         "minutely_15": "precipitation",
         "forecast_minutely_15": 8,
         "wind_speed_unit": "kmh",
@@ -252,28 +253,91 @@ def holidays():
     return jsonify({"holidays": [{"date": d, "name": n} for d, n in upcoming]})
 
 
-# ---------- stats de la machine qui héberge l'app ----------
-@app.route("/api/server")
-def server_stats():
-    if psutil is None:
-        return jsonify({"error": "psutil non installé"}), 501
-    vm = psutil.virtual_memory()
-    disk = psutil.disk_usage(os.path.abspath(os.sep))
-    return jsonify({
-        "cpu": psutil.cpu_percent(interval=None),
-        "cores": psutil.cpu_count(),
-        "ram_percent": vm.percent,
-        "ram_used_mb": round(vm.used / 1048576),
-        "ram_total_mb": round(vm.total / 1048576),
-        "disk_percent": disk.percent,
-        "disk_free_gb": round(disk.free / 1073741824, 1),
-        "uptime_s": int(time.time() - psutil.boot_time()),
-        "load": os.getloadavg() if hasattr(os, "getloadavg") else None,
-    })
+# ---------- mer (Open-Meteo Marine) ----------
+@app.route("/api/marine")
+def marine():
+    c = get_coords(2)
+    if not c:
+        return bad_coords()
+    return proxy(MARINE, {"latitude": c[0], "longitude": c[1], "timezone": "auto",
+                          "current": "wave_height,wave_direction,wave_period,sea_surface_temperature"}, ttl=1800)
+
+
+# ---------- électricité en France (RTE éCO2mix, temps réel) ----------
+@app.route("/api/power")
+def power():
+    try:
+        data = cached_get(ECO2MIX, {"where": "taux_co2 is not null", "order_by": "date_heure desc", "limit": 1}, ttl=300)
+        rec = (data.get("results") or [None])[0]
+        if not rec:
+            raise ValueError("aucune donnée")
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"error": str(e)}), 502
+    sources = ["nucleaire", "eolien", "solaire", "hydraulique", "gaz", "charbon", "fioul", "bioenergies"]
+    mix = {k: max(0, rec.get(k) or 0) for k in sources}
+    return jsonify({"time": rec.get("date_heure"), "consommation": rec.get("consommation"),
+                    "co2": rec.get("taux_co2"), "mix": mix, "total": sum(mix.values())})
+
+
+# ---------- vacances scolaires (zones A/B/C) ----------
+SCHOOL_ZONES = {"A": "Lyon", "B": "Lille", "C": "Paris"}  # une académie représentative par zone
+
+
+def paris_date(value):
+    """Date locale (Paris) d'un champ date/datetime de l'API (souvent minuit Paris exprimé en UTC)."""
+    if not value:
+        return None
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return (dt.astimezone(PARIS) if dt.tzinfo else dt).date()
+
+
+@app.route("/api/school-holidays")
+def school_holidays():
+    today = datetime.now(PARIS).date()
+    merged = {}
+    try:
+        for zone, academy in SCHOOL_ZONES.items():
+            data = cached_get(SCHOOL, {"where": f'end_date>="{today.isoformat()}"', "order_by": "end_date",
+                                       "limit": 30, "refine": f"location:{academy}"}, ttl=21600)
+            seen = set()
+            for rec in data.get("results", []):
+                if rec.get("population") == "Enseignants":
+                    continue
+                start, end = paris_date(rec.get("start_date")), paris_date(rec.get("end_date"))
+                if not start or not end or end < today or (rec["description"], start) in seen:
+                    continue
+                seen.add((rec["description"], start))
+                if len(seen) > 3:  # 3 prochaines périodes par zone suffisent
+                    break
+                key = (rec["description"], start.isoformat(), end.isoformat())
+                merged.setdefault(key, []).append(zone)
+    except (requests.RequestException, ValueError, KeyError) as e:
+        return jsonify({"error": str(e)}), 502
+    rows = [{"name": n, "start": s_, "end": e_, "zones": z} for (n, s_, e_), z in sorted(merged.items(), key=lambda kv: kv[0][1])]
+    return jsonify({"holidays": rows[:6]})
+
+
+# ---------- jours fériés dans le monde (Nager.Date) ----------
+@app.route("/api/world-holidays")
+def world_holidays():
+    codes = [c for c in request.args.get("countries", "").upper().split(",") if re.fullmatch(r"[A-Z]{2}", c)][:20]
+    if not codes:
+        return jsonify({"error": "Aucun pays"}), 400
+
+    def one(cc):
+        try:
+            data = cached_get(f"{NAGER}/NextPublicHolidays/{cc}", {}, ttl=86400)
+        except (requests.RequestException, ValueError):
+            return cc, None
+        pub = [h for h in data if "Public" in (h.get("types") or ["Public"])]
+        return cc, [{"date": h["date"], "name": h.get("name"), "local": h.get("localName")} for h in pub[:3]]
+
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        return jsonify(dict(ex.map(one, codes)))
 
 
 def main():
-    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5003)))
+    app.run(host="127.0.0.1", port=5003)
 
 
 if __name__ == "__main__":

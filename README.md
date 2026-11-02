@@ -10,11 +10,13 @@ Flask backend (cached proxy to public APIs) + vanilla HTML/CSS/JS frontend.
 - **Alerts & tips**: storms, gusts, heat, frost, UV, fog, rain, pressure drop, air quality, pollen, nearby earthquakes, geomagnetic storms, public holidays
 - **Air quality & pollen**, **sun & moon**
 - **Live map**: animated rain radar, your position, ISS, earthquakes
-- **Fuel prices** nearby (France only)
+- **France focus**: electricity mix & CO₂ intensity (RTE), school holidays (zones A/B/C), public holidays, fuel prices nearby
+- **Holidays worldwide** for 18 countries (UK, US, Germany, Spain, Italy, Canada, Japan, China, India, Brazil…) and key dates (clock changes, Black Friday, Halloween…)
+- **Sea & waves** near coasts (hidden inland)
 - **GPS trip stats**: speed, heading, distance, max/average speed
 - **Space weather** (Kp index), **exchange rates & crypto**, **world clocks**, **calendar & French public holidays**
 - **Device & network info**, **speedtest**, battery and orientation (on supported devices)
-- **Server stats** (CPU, RAM, disk) of the machine hosting the app
+- **Device performance**: live FPS, UI latency, quick CPU benchmark, browser storage (all measured on your own device)
 
 You can also search for a city manually instead of using GPS.
 
@@ -36,7 +38,7 @@ cd live-info
 uv sync
 
 # Or with pip
-pip install flask requests psutil
+pip install flask requests
 ```
 
 ### Running the Web App
@@ -57,7 +59,7 @@ To change the host or port, set the `HOST` / `PORT` environment variables (e.g. 
 
 - **GPS, battery and orientation need HTTPS** (or `localhost`). Opening the app from a phone via `http://192.168.x.x:5003` won't work; use a reverse proxy with HTTPS.
 - **Location accuracy**: phones use real GPS (a few meters). Desktops have no GPS chip, so the browser relies on Wi-Fi/IP and can be off by hundreds of meters or more. The accuracy is shown in the GPS card.
-- Fuel prices cover **France only**; public holidays are French metropolitan holidays.
+- Fuel prices, electricity and school holidays cover **France only** (school holidays: metropolitan zones A/B/C).
 - Don't run Flask's dev server in production: use something like `gunicorn -b 127.0.0.1:5003 app:app` behind a reverse proxy.
 
 ## Project Structure
@@ -83,6 +85,9 @@ static/
 [Frankfurter](https://frankfurter.dev/) ·
 [CoinGecko](https://www.coingecko.com/) ·
 [calendrier.api.gouv.fr](https://calendrier.api.gouv.fr/jours-feries/) ·
+[RTE éCO2mix](https://odre.opendatasoft.com/explore/dataset/eco2mix-national-tr/) (electricity) ·
+[data.education.gouv.fr](https://data.education.gouv.fr/explore/dataset/fr-en-calendrier-scolaire/) (school calendar) ·
+[Nager.Date](https://date.nager.at/) (worldwide holidays) ·
 [Cloudflare Speed Test](https://speed.cloudflare.com/) ·
 [Leaflet](https://leafletjs.com/) with © OpenStreetMap © CARTO tiles.
 

@@ -91,7 +91,7 @@ function setLocation(lat, lon, name) {
     state.locSeq++;
     state.last = { t: Date.now(), lat, lon, acc: state.mode === 'gps' ? state.acc : null };
     if (name) setText('location-text', `📍 ${name}`); else loadPlace();
-    loadWeather(); loadAir(); loadFuel();
+    loadWeather(); loadAir(); loadFuel(); loadMarine();
     renderQuakes();
     updateMapLocation();
 }
@@ -292,7 +292,7 @@ function renderSun() {
     const dl = state.weather?.daily;
     if (dl) {
         items.push(['Lever', hm(dl.sunrise[0])], ['Coucher', hm(dl.sunset[0])],
-            ['Durée du jour', dur(dl.daylight_duration[0])], ['UV max', dl.uv_index_max[0]?.toFixed(1) ?? '--']);
+            ['Durée du jour', dur(dl.daylight_duration[0])], ['Soleil prévu', dl.sunshine_duration?.[0] == null ? '--' : dur(dl.sunshine_duration[0])], ['UV max', dl.uv_index_max[0]?.toFixed(1) ?? '--']);
     }
     items.push(['Lune', `${m.icon} ${m.name}`], ['Illumination', `${m.illum}%`, m.illum, 'progress-ram']);
     metrics('sun-metrics', items);
@@ -412,23 +412,63 @@ function renderClocks() {
         [label, new Date().toLocaleTimeString('fr-FR', { timeZone, hour: '2-digit', minute: '2-digit' })]));
 }
 
-// ============ SERVEUR (psutil) ============
-let serverTimer = null;
-async function loadServer() {
-    try {
-        const s = await api('server');
-        show($('#server-card'));
-        metrics('server-metrics', [
-            ['CPU', `${s.cpu.toFixed(0)}%`, s.cpu, 'progress-cpu'],
-            ['RAM', `${s.ram_percent.toFixed(0)}%`, s.ram_percent, 'progress-ram'],
-            ['RAM utilisée', `${s.ram_used_mb} / ${s.ram_total_mb} Mo`],
-            ['Disque', `${s.disk_percent.toFixed(0)}%`, s.disk_percent, 'progress-gpu'],
-            ['Libre', `${s.disk_free_gb} Go`], ['Cœurs', s.cores],
-            ['Uptime', dur(s.uptime_s)], ['Charge 1/5/15 min', s.load ? s.load.map((v) => v.toFixed(1)).join(' ') : '--'],
-        ]);
-    } catch (e) {
-        if (String(e.message).includes('psutil')) { clearInterval(serverTimer); hide($('#server-card')); }
+// ============ PERFORMANCES DE L'APPAREIL (mesurées dans le navigateur) ============
+const perf = { fps: null, lag: null, bench: null, storage: null };
+const fmtBytes = (b) => (b >= 1e12 ? `${(b / 1e12).toFixed(1)} To` : b >= 1e9 ? `${(b / 1e9).toFixed(1)} Go` : `${round(b / 1e6)} Mo`);
+
+function renderPerf() {
+    const items = [
+        ['FPS', perf.fps ?? '--', perf.fps == null ? null : (perf.fps / 60) * 100, perf.fps < 30 ? 'progress-gpu' : 'progress-cpu'],
+        ['Latence UI', perf.lag == null ? '--' : `${perf.lag.toFixed(0)} ms`],
+        ['Score CPU (1 cœur)', perf.bench == null ? 'Non mesuré' : `${perf.bench} Mop/s`],
+        ['Cœurs logiques', navigator.hardwareConcurrency || '--'],
+    ];
+    if (navigator.deviceMemory) items.push(['RAM (approx.)', `${navigator.deviceMemory}${navigator.deviceMemory >= 8 ? '+' : ''} Go`]);
+    if (performance.memory) {
+        const used = round(performance.memory.usedJSHeapSize / 1048576), lim = round(performance.memory.jsHeapSizeLimit / 1048576);
+        items.push(['Mémoire JS', `${used} / ${lim} Mo`, (used / lim) * 100, 'progress-ram']);
     }
+    if (perf.storage?.quota) items.push(['Stockage navigateur', `${fmtBytes(perf.storage.usage)} / ${fmtBytes(perf.storage.quota)}`, (perf.storage.usage / perf.storage.quota) * 100, 'progress-gpu']);
+    metrics('perf-metrics', items);
+}
+
+function runBench() {
+    const btn = $('#bench-btn');
+    btn.disabled = true; btn.textContent = 'Mesure en cours…';
+    setTimeout(() => { // laisse le navigateur afficher le texte avant de bloquer le thread
+        let n = 0, x = 0;
+        const t0 = performance.now();
+        while (performance.now() - t0 < 400) {
+            for (let i = 0; i < 20000; i++) x += Math.sqrt(i) * Math.sin(i);
+            n += 20000;
+        }
+        perf.bench = round(n / (performance.now() - t0) / 1000); // millions d'opérations / s
+        perf.sink = x; // empêche l'optimiseur de supprimer la boucle
+        btn.disabled = false; btn.textContent = 'Refaire le test';
+        renderPerf();
+    }, 50);
+}
+
+function startPerfMonitor() {
+    let frames = 0, t0 = performance.now();
+    const loop = (t) => {
+        frames++;
+        if (t - t0 >= 1000) { perf.fps = round((frames * 1000) / (t - t0)); frames = 0; t0 = t; }
+        requestAnimationFrame(loop);
+    };
+    requestAnimationFrame(loop);
+
+    let expected = performance.now() + 500; // retard du timer = fluidité du thread principal
+    setInterval(() => {
+        const now = performance.now();
+        perf.lag = document.hidden ? null : Math.max(0, now - expected);
+        expected = now + 500;
+    }, 500);
+
+    const storage = () => navigator.storage?.estimate?.().then((e) => { perf.storage = e; }).catch(() => { /* non dispo */ });
+    storage(); every(30e3, storage);
+    $('#bench-btn').addEventListener('click', runBench);
+    renderPerf(); every(1000, renderPerf);
 }
 
 // ============ GPS / TRAJET ============
@@ -574,10 +614,6 @@ function renderDevice() {
     if (navigator.deviceMemory) items.splice(6, 0, ['Mémoire (approx.)', `${navigator.deviceMemory} Go`]);
     if (deviceExtra.arch) items.splice(6, 0, ['Architecture', deviceExtra.arch]);
     if (conn?.downlink != null) items.push(['Débit estimé', `${conn.downlink} Mbps`], ['Latence estimée', `${conn.rtt} ms`]);
-    if (performance.memory) {
-        const used = round(performance.memory.usedJSHeapSize / 1048576), lim = round(performance.memory.jsHeapSizeLimit / 1048576);
-        items.push(['Mémoire JS', `${used} / ${lim} Mo`, (used / lim) * 100, 'progress-ram']);
-    }
     metrics('device-metrics', items);
 }
 
@@ -590,7 +626,6 @@ function initDevice() {
     window.addEventListener('online', renderDevice);
     window.addEventListener('offline', renderDevice);
     navigator.connection?.addEventListener('change', renderDevice);
-    every(5000, renderDevice); // met à jour la mémoire JS
 }
 
 // ============ SPEEDTEST (Cloudflare) ============
@@ -802,10 +837,10 @@ function isoWeek(d) {
     return Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7);
 }
 
-function daysUntil(dateStr) {
-    const n = new Date();
-    return round((new Date(`${dateStr}T00:00`) - new Date(n.getFullYear(), n.getMonth(), n.getDate())) / 864e5);
-}
+const startOfToday = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
+const daysUntil = (dateStr) => round((new Date(`${dateStr}T00:00`) - startOfToday()) / 864e5);
+const daysTo = (d) => round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - startOfToday()) / 864e5);
+const whenLabel = (n) => (n < 0 ? 'Passé' : n === 0 ? "Aujourd'hui" : n === 1 ? 'Demain' : `J-${n}`);
 
 function renderCalendar() {
     const now = new Date(), y = now.getFullYear();
@@ -887,6 +922,171 @@ async function loadMarkets() {
     }
 }
 
+// ============ ÉLECTRICITÉ EN FRANCE (RTE éCO2mix) ============
+async function loadPower() {
+    try {
+        const d = await api('power'), m = d.mix, total = d.total || 0, co2 = d.co2;
+        const share = (v) => (total ? (v / total) * 100 : 0);
+        const renew = m.eolien + m.solaire + m.hydraulique + m.bioenergies, fossil = m.gaz + m.charbon + m.fioul;
+        const label = co2 < 30 ? 'Très bas carbone' : co2 < 60 ? 'Bas carbone' : co2 < 100 ? 'Moyen' : 'Carboné';
+        metrics('power-metrics', [
+            ['Consommation', d.consommation == null ? '--' : `${(d.consommation / 1000).toFixed(1)} GW`],
+            ['Production', `${(total / 1000).toFixed(1)} GW`],
+            ['Nucléaire', `${round(share(m.nucleaire))}%`, share(m.nucleaire), 'progress-ram'],
+            ['Renouvelables', `${round(share(renew))}%`, share(renew), 'progress-cpu'],
+            ['Fossiles', `${round(share(fossil))}%`, share(fossil), 'progress-gpu'],
+            ['Intensité CO₂', `${co2} g/kWh`],
+        ]);
+        const tip = co2 <= 40 ? 'Bon moment pour consommer : électricité très bas carbone.'
+            : co2 >= 100 ? 'Électricité carbonée : décale les gros usages si possible.' : 'Mix électrique dans la moyenne.';
+        setText('power-hint', `${tip} Mesure ${ago(Date.parse(d.time))}.`);
+        setStatus('power', co2 < 60 ? 'ok' : co2 < 100 ? 'warn' : 'error', label);
+    } catch (e) {
+        console.error('Power:', e);
+        setStatus('power', 'error', 'Erreur');
+    }
+}
+
+// ============ VACANCES SCOLAIRES ============
+const fmtDay = (iso) => new Date(`${iso}T12:00`).toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+
+async function loadSchool() {
+    const box = $('#school-list');
+    try {
+        const list = (await api('school-holidays')).holidays;
+        box.innerHTML = list.length ? list.map((h) => {
+            const s = daysUntil(h.start), e = daysUntil(h.end);
+            const when = s <= 0 && e > 0 ? 'En cours' : s > 0 ? `J-${s}` : 'Terminé';
+            const zones = h.zones.length === 3 ? 'Toutes zones' : `Zone ${h.zones.join(', ')}`;
+            return `<div class="row"><div>${esc(h.name)}<small>${esc(zones)} · départ ${esc(fmtDay(h.start))} · reprise ${esc(fmtDay(h.end))}</small></div><span class="mono">${when}</span></div>`;
+        }).join('') : '<div class="empty">Aucune période à venir.</div>';
+    } catch (e) {
+        console.error('School:', e);
+        box.innerHTML = '<div class="empty">Vacances scolaires indisponibles.</div>';
+    }
+}
+
+// ============ JOURS IMPORTANTS (calculés localement) ============
+function easter(y) { // algorithme de Meeus/Jones/Butcher
+    const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4;
+    const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3), h = (19 * a + b - d - g + 15) % 30;
+    const i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+    const month = Math.floor((h + l - 7 * m + 114) / 31), day = ((h + l - 7 * m + 114) % 31) + 1;
+    return new Date(y, month - 1, day);
+}
+const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
+
+/** n-ième jour de semaine d'un mois (wd: 0 = dimanche) ; n = -1 pour le dernier. */
+function nthWeekday(y, m, wd, n) {
+    if (n > 0) return new Date(y, m, 1 + ((wd - new Date(y, m, 1).getDay() + 7) % 7) + (n - 1) * 7);
+    const last = new Date(y, m + 1, 0);
+    return new Date(y, m, last.getDate() - ((last.getDay() - wd + 7) % 7));
+}
+
+function observances(y) {
+    const E = easter(y), pentecost = addDays(E, 49), thanksgiving = nthWeekday(y, 10, 4, 4);
+    let mothers = nthWeekday(y, 4, 0, -1); // dernier dimanche de mai, sauf Pentecôte -> 1er dimanche de juin
+    if (+mothers === +pentecost) mothers = nthWeekday(y, 5, 0, 1);
+    return [
+        ['Jour des Rois (galette)', new Date(y, 0, 6)], ['Chandeleur (crêpes)', new Date(y, 1, 2)],
+        ['Saint-Valentin', new Date(y, 1, 14)], ['Mardi gras', addDays(E, -47)],
+        ['Journée internationale des droits des femmes', new Date(y, 2, 8)], ['Saint-Patrick', new Date(y, 2, 17)],
+        ["Passage à l'heure d'été (Europe)", nthWeekday(y, 2, 0, -1)], ["Heure d'été aux États-Unis", nthWeekday(y, 2, 0, 2)],
+        ["Poisson d'avril", new Date(y, 3, 1)], ['Fête des mères (France)', mothers],
+        ['Fête des pères (France)', nthWeekday(y, 5, 0, 3)], ['Fête de la musique', new Date(y, 5, 21)],
+        ['Halloween', new Date(y, 9, 31)], ["Passage à l'heure d'hiver (Europe)", nthWeekday(y, 9, 0, -1)],
+        ['Bonfire Night (Royaume-Uni)', new Date(y, 10, 5)], ["Heure d'hiver aux États-Unis", nthWeekday(y, 10, 0, 1)],
+        ['Beaujolais nouveau', nthWeekday(y, 10, 4, 3)], ['Black Friday', addDays(thanksgiving, 1)],
+        ['Cyber Monday', addDays(thanksgiving, 4)], ['Réveillon de Noël', new Date(y, 11, 24)],
+        ['Réveillon du Nouvel An', new Date(y, 11, 31)],
+    ].map(([name, date]) => ({ name, date }));
+}
+
+function renderObservances() {
+    const y = new Date().getFullYear();
+    const list = [...observances(y), ...observances(y + 1)]
+        .map((o) => ({ ...o, n: daysTo(o.date) })).filter((o) => o.n >= 0).sort((a, b) => a.n - b.n).slice(0, 6);
+    $('#obs-list').innerHTML = list.map((o) => {
+        const day = o.date.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+        return `<div class="row"><div>${esc(o.name)}<small>${esc(day)}</small></div><span class="mono">${whenLabel(o.n)}</span></div>`;
+    }).join('');
+}
+
+// ============ JOURS FÉRIÉS DANS LE MONDE (Nager.Date) ============
+const COUNTRIES = ['GB', 'US', 'DE', 'ES', 'IT', 'CA', 'JP', 'CN', 'IN', 'BR', 'AU', 'MX', 'KR', 'CH', 'BE', 'NL', 'PT', 'IE'];
+const COUNTRIES_KEY = 'live-info:countries';
+let selected = ['GB', 'US', 'DE', 'ES', 'IT', 'CA', 'JP', 'CN', 'IN', 'BR'];
+try {
+    const saved = JSON.parse(localStorage.getItem(COUNTRIES_KEY));
+    if (Array.isArray(saved)) selected = saved.filter((c) => COUNTRIES.includes(c));
+} catch { /* stockage indisponible */ }
+
+const flag = (cc) => String.fromCodePoint(...[...cc].map((c) => 127397 + c.charCodeAt(0)));
+let regionNames = null;
+try { regionNames = new Intl.DisplayNames(['fr'], { type: 'region' }); } catch { /* non supporté */ }
+const countryName = (cc) => { try { return regionNames?.of(cc) || cc; } catch { return cc; } };
+
+function renderChips() {
+    $('#country-chips').innerHTML = COUNTRIES.map((cc) =>
+        `<button type="button" class="chip${selected.includes(cc) ? ' on' : ''}" data-cc="${cc}" aria-pressed="${selected.includes(cc)}">${flag(cc)} ${esc(countryName(cc))}</button>`).join('');
+}
+
+async function loadWorld() {
+    const box = $('#world-list'), asked = selected.join(',');
+    if (!selected.length) { box.innerHTML = '<div class="empty">Sélectionne au moins un pays.</div>'; return; }
+    setStatus('world', 'pending', 'Chargement...');
+    try {
+        const d = await api('world-holidays', { countries: asked });
+        if (asked !== selected.join(',')) return; // la sélection a changé entre-temps
+        box.innerHTML = selected.map((cc) => {
+            const list = d[cc];
+            const rows = !list ? '<div class="empty">Indisponible</div>' : list.map((h) => {
+                const n = daysUntil(h.date);
+                return `<div class="h" title="${esc(h.local)}"><span>${esc(h.name)}<br><small class="empty">${esc(fmtDay(h.date))}</small></span><span class="mono${n === 0 ? ' today-flag' : ''}">${n === 0 ? '🎉 ' : ''}${whenLabel(n)}</span></div>`;
+            }).join('');
+            return `<div class="country"><h3>${flag(cc)} ${esc(countryName(cc))}</h3>${rows}</div>`;
+        }).join('');
+        setStatus('world', 'ok', 'OK');
+    } catch (e) {
+        console.error('World holidays:', e);
+        setStatus('world', 'error', 'Erreur');
+    }
+}
+
+function initWorld() {
+    renderChips();
+    $('#country-chips').addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-cc]');
+        if (!b) return;
+        const cc = b.dataset.cc;
+        selected = selected.includes(cc) ? selected.filter((c) => c !== cc) : [...selected, cc];
+        try { localStorage.setItem(COUNTRIES_KEY, JSON.stringify(selected)); } catch { /* ignore */ }
+        renderChips();
+        loadWorld();
+    });
+    loadWorld(); every(6 * 3600e3, loadWorld);
+}
+
+// ============ MER (masquée loin des côtes) ============
+async function loadMarine() {
+    if (state.lat === null) return;
+    const seq = state.locSeq, card = $('#marine-card');
+    try {
+        const c = (await api('marine', { lat: state.lat, lon: state.lon })).current || {};
+        if (seq !== state.locSeq) return;
+        if (c.wave_height == null && c.sea_surface_temperature == null) throw new Error('pas de données marines ici');
+        const f = (v, unit, d = 1) => (v == null ? '--' : `${v.toFixed(d)} ${unit}`);
+        metrics('marine-metrics', [
+            ['Température de la mer', f(c.sea_surface_temperature, '°C')], ['Hauteur des vagues', f(c.wave_height, 'm')],
+            ['Période', f(c.wave_period, 's')], ['Vagues venant du', c.wave_direction == null ? '--' : `${cardinal(c.wave_direction)} (${round(c.wave_direction)}°)`],
+        ]);
+        show(card);
+        setStatus('marine', 'ok', 'OK');
+    } catch (e) {
+        if (seq === state.locSeq) hide(card); // pas de côte à proximité
+    }
+}
+
 // ============ INITIALISATION ============
 function init() {
     initDevice();
@@ -908,7 +1108,12 @@ function init() {
 
     loadQuakes(); every(5 * 60e3, loadQuakes);
     loadIss(); every(10e3, loadIss);
-    loadServer(); serverTimer = every(3000, loadServer);
+    startPerfMonitor();
+    loadPower(); every(5 * 60e3, loadPower);
+    loadSchool(); every(6 * 3600e3, loadSchool);
+    renderObservances(); every(3600e3, renderObservances);
+    initWorld();
+    every(30 * 60e3, loadMarine);
     every(10 * 60e3, () => { loadWeather(); loadFuel(); });
     every(30 * 60e3, loadAir);
     initMap(); every(10 * 60e3, loadRadar);

@@ -6,7 +6,6 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "flask>=3.0",
-    "psutil>=7.2.2",
     "requests>=2.31",
 ]
 
