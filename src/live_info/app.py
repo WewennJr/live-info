@@ -238,6 +238,11 @@ def markets():
     return jsonify(out)
 
 
+@app.route("/api/fx")
+def fx():
+    return proxy(FX_API, {"base": "EUR"}, ttl=3600)
+
+
 @app.route("/api/holidays")
 def holidays():
     today = date.today()
@@ -337,7 +342,7 @@ def world_holidays():
 
 
 def main():
-    app.run(host="127.0.0.1", port=5003)
+    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5003)))
 
 
 if __name__ == "__main__":

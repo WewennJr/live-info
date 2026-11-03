@@ -18,6 +18,10 @@ Flask backend (cached proxy to public APIs) + vanilla HTML/CSS/JS frontend.
 - **Device & network info**, **speedtest**, battery and orientation (on supported devices)
 - **Device performance**: live FPS, UI latency, quick CPU benchmark, browser storage (all measured on your own device)
 
+- **World clocks**: add any city (time zone detected automatically)
+- **Handy tools**: VAT & discount calculator, unit and currency converters, stopwatch & timer, countdown, password generator, notepad, emergency numbers
+- **Light / dark theme** (follows your system by default), French interface
+
 You can also search for a city manually instead of using GPS.
 
 ## Quick Start
@@ -89,7 +93,7 @@ static/
 [data.education.gouv.fr](https://data.education.gouv.fr/explore/dataset/fr-en-calendrier-scolaire/) (school calendar) ·
 [Nager.Date](https://date.nager.at/) (worldwide holidays) ·
 [Cloudflare Speed Test](https://speed.cloudflare.com/) ·
-[Leaflet](https://leafletjs.com/) with © OpenStreetMap © CARTO tiles.
+[Leaflet](https://leafletjs.com/) with [OpenStreetMap France](https://www.openstreetmap.fr/) tiles (© OpenStreetMap contributors).
 
 ## License
 

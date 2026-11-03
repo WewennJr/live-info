@@ -242,7 +242,7 @@ function renderNowcast(d) {
     let msg;
     if (first === -1) msg = '☀️ Pas de pluie prévue dans les 2 h';
     else if (first === 0) msg = '🌧️ Il pleut en ce moment';
-    else { msg = `🌧️ Pluie dans ~${first * 15} min`; state.rainMsg = `Pluie attendue dans ~${first * 15} min : prends un parapluie.`; }
+    else { msg = `🌧️ Pluie dans ~${first * 15} min`; state.rainMsg = `Pluie attendue dans ~${first * 15} min : prévoyez un parapluie.`; }
     if (first === 0) state.rainMsg = 'Il pleut en ce moment.';
     setText('nowcast-summary', msg);
 }
@@ -281,7 +281,7 @@ function moonPhase(date = new Date()) {
     const synodic = 29.530588853, ref = Date.UTC(2000, 0, 6, 18, 14); // nouvelle lune de référence
     const age = (((date - ref) / 86400000) % synodic + synodic) % synodic;
     const phases = [['Nouvelle lune', '🌑'], ['Premier croissant', '🌒'], ['Premier quartier', '🌓'], ['Gibbeuse croissante', '🌔'],
-        ['Pleine lune', '🌕'], ['Gibbeuse décroissante', '🌖'], ['Dernier quartier', '🌗'], ['Dernier croissant', '🌘']];
+    ['Pleine lune', '🌕'], ['Gibbeuse décroissante', '🌖'], ['Dernier quartier', '🌗'], ['Dernier croissant', '🌘']];
     const [name, icon] = phases[Math.floor((age / synodic) * 8 + 0.5) % 8];
     return { name, icon, age, illum: round(((1 - Math.cos(2 * Math.PI * age / synodic)) / 2) * 100) };
 }
@@ -314,8 +314,8 @@ async function loadAir() {
         const label = aqi == null ? 'N/D' : AQI_BANDS.find(([max]) => aqi <= max)[1];
         metrics('air-metrics', [
             ['Indice européen', aqi ?? '--', aqi == null ? null : Math.min(100, aqi), aqi > 60 ? 'progress-gpu' : 'progress-cpu'],
-            ['PM2.5', `${c.pm2_5 ?? '--'} µg/m³`], ['PM10', `${c.pm10 ?? '--'} µg/m³`],
-            ['NO₂', `${c.nitrogen_dioxide ?? '--'} µg/m³`], ['Ozone', `${c.ozone ?? '--'} µg/m³`], ['SO₂', `${c.sulphur_dioxide ?? '--'} µg/m³`],
+            ['Particules fines PM2,5', `${c.pm2_5 ?? '--'} µg/m³`], ['Particules PM10', `${c.pm10 ?? '--'} µg/m³`],
+            ["Dioxyde d'azote (NO₂)", `${c.nitrogen_dioxide ?? '--'} µg/m³`], ['Ozone (O₃)', `${c.ozone ?? '--'} µg/m³`], ['Dioxyde de soufre (SO₂)', `${c.sulphur_dioxide ?? '--'} µg/m³`],
         ]);
         const idx = Math.max(0, (d.hourly.time || []).findIndex((t) => t >= c.time.slice(0, 13)));
         state.pollen = {};
@@ -382,7 +382,7 @@ function renderQuakes() {
     list.innerHTML = state.quakes.slice(0, 6).map((q) => {
         const km = state.lat === null ? null : round(haversineKm(state.lat, state.lon, q.lat, q.lon));
         const color = q.mag >= 6 ? 'var(--danger)' : q.mag >= 5 ? 'var(--warning)' : 'inherit';
-        return `<div class="row"><div>${esc(q.place)}<small>${ago(q.time)} · prof. ${round(q.depth)} km${km === null ? '' : ` · à ${km} km`}</small></div><span class="mono" style="color:${color}">M${Number(q.mag).toFixed(1)}</span></div>`;
+        return `<div class="row"><div>${esc(q.place)}<small>${ago(q.time)} · profondeur ${round(q.depth)} km${km === null ? '' : ` · à ${km} km`}</small></div><span class="mono" style="color:${color}">M${Number(q.mag).toFixed(1)}</span></div>`;
     }).join('');
 }
 
@@ -396,39 +396,26 @@ async function loadIss() {
         metrics('iss-metrics', [
             ['Latitude', `${d.latitude.toFixed(2)}°`], ['Longitude', `${d.longitude.toFixed(2)}°`],
             ['Altitude', `${round(d.altitude)} km`], ['Vitesse', `${round(d.velocity).toLocaleString('fr-FR')} km/h`],
-            ['Distance de toi', km], ['Éclairage', vis],
+            ['Distance depuis vous', km], ['Éclairage', vis],
         ]);
-        setStatus('iss', 'ok', 'Live');
+        setStatus('iss', 'ok', 'En direct');
     } catch (e) {
         console.error('ISS:', e);
         setStatus('iss', 'error', 'Erreur');
     }
 }
 
-// ============ HEURES DU MONDE ============
-const ZONES = [['Ici', undefined], ['UTC', 'UTC'], ['New York', 'America/New_York'], ['Tokyo', 'Asia/Tokyo'], ['Sydney', 'Australia/Sydney'], ['Dubaï', 'Asia/Dubai']];
-function renderClocks() {
-    metrics('clocks', ZONES.map(([label, timeZone]) =>
-        [label, new Date().toLocaleTimeString('fr-FR', { timeZone, hour: '2-digit', minute: '2-digit' })]));
-}
-
 // ============ PERFORMANCES DE L'APPAREIL (mesurées dans le navigateur) ============
-const perf = { fps: null, lag: null, bench: null, storage: null };
-const fmtBytes = (b) => (b >= 1e12 ? `${(b / 1e12).toFixed(1)} To` : b >= 1e9 ? `${(b / 1e9).toFixed(1)} Go` : `${round(b / 1e6)} Mo`);
+const perf = { fps: null, lag: null, bench: null };
 
 function renderPerf() {
     const items = [
-        ['FPS', perf.fps ?? '--', perf.fps == null ? null : (perf.fps / 60) * 100, perf.fps < 30 ? 'progress-gpu' : 'progress-cpu'],
-        ['Latence UI', perf.lag == null ? '--' : `${perf.lag.toFixed(0)} ms`],
-        ['Score CPU (1 cœur)', perf.bench == null ? 'Non mesuré' : `${perf.bench} Mop/s`],
-        ['Cœurs logiques', navigator.hardwareConcurrency || '--'],
+        ['Images par seconde', perf.fps ?? '--', perf.fps == null ? null : (perf.fps / 60) * 100, perf.fps < 30 ? 'progress-gpu' : 'progress-cpu'],
+        ['Réactivité (retard)', perf.lag == null ? '--' : `${perf.lag.toFixed(0)} ms`],
+        ['Puissance de calcul (1 cœur)', perf.bench == null ? 'Non mesurée' : `${perf.bench} M op./s`],
+        ['Cœurs du processeur', navigator.hardwareConcurrency || '--'],
     ];
-    if (navigator.deviceMemory) items.push(['RAM (approx.)', `${navigator.deviceMemory}${navigator.deviceMemory >= 8 ? '+' : ''} Go`]);
-    if (performance.memory) {
-        const used = round(performance.memory.usedJSHeapSize / 1048576), lim = round(performance.memory.jsHeapSizeLimit / 1048576);
-        items.push(['Mémoire JS', `${used} / ${lim} Mo`, (used / lim) * 100, 'progress-ram']);
-    }
-    if (perf.storage?.quota) items.push(['Stockage navigateur', `${fmtBytes(perf.storage.usage)} / ${fmtBytes(perf.storage.quota)}`, (perf.storage.usage / perf.storage.quota) * 100, 'progress-gpu']);
+    if (navigator.deviceMemory) items.push(['Mémoire vive (approx.)', `${navigator.deviceMemory}${navigator.deviceMemory >= 8 ? '+' : ''} Go`]);
     metrics('perf-metrics', items);
 }
 
@@ -465,8 +452,6 @@ function startPerfMonitor() {
         expected = now + 500;
     }, 500);
 
-    const storage = () => navigator.storage?.estimate?.().then((e) => { perf.storage = e; }).catch(() => { /* non dispo */ });
-    storage(); every(30e3, storage);
     $('#bench-btn').addEventListener('click', runBench);
     renderPerf(); every(1000, renderPerf);
 }
@@ -482,7 +467,7 @@ function startGPS() {
     }
     if (watchId !== null) return;
     // 1) fix rapide (Wi-Fi/IP) pour afficher quelque chose tout de suite ; 2) suivi haute précision qui l'affine
-    navigator.geolocation.getCurrentPosition((p) => { if (!state.gpsPos) onGpsSuccess(p); }, () => {},
+    navigator.geolocation.getCurrentPosition((p) => { if (!state.gpsPos) onGpsSuccess(p); }, () => { },
         { enableHighAccuracy: false, timeout: 8000, maximumAge: 60000 });
     watchId = navigator.geolocation.watchPosition(onGpsSuccess, onGpsError, { enableHighAccuracy: true, timeout: 10000, maximumAge: 5000 });
 }
@@ -519,7 +504,7 @@ function onGpsError(err) {
     const msg = { 1: 'Permission refusée', 2: 'Position indisponible', 3: 'Timeout' }[err.code] || 'Erreur GPS';
     setStatus('gps', 'error', msg);
     if (state.lat === null) {
-        setText('location-text', `${msg}. Autorise la position (icône 📍 de la barre d'adresse) ou cherche une ville.`);
+        setText('location-text', `${msg}. Autorisez la position (icône 📍 de la barre d'adresse) ou recherchez une ville.`);
         renderAlerts();
     }
 }
@@ -528,23 +513,23 @@ function onGpsError(err) {
 function renderAlerts() {
     const items = [];
     const w = state.weather, a = state.air;
-    if (state.lat === null) items.push(['info', 'Autorise la géolocalisation ou cherche une ville pour afficher météo, air et carburants.']);
+    if (state.lat === null) items.push(['info', "Autorisez la géolocalisation ou recherchez une ville pour afficher la météo, la qualité de l'air et les carburants."]);
     if (w) {
         const c = w.current, dl = w.daily, hi = hourIndex(w);
         const vis = w.hourly.visibility?.[hi];
-        if (c.weather_code >= 95) items.push(['danger', 'Orage en cours ou imminent : évite les zones dégagées et les arbres.']);
+        if (c.weather_code >= 95) items.push(['danger', 'Orage en cours ou imminent : évitez les zones dégagées et les arbres.']);
         if (c.wind_gusts_10m >= 90) items.push(['danger', `Rafales très violentes (${round(c.wind_gusts_10m)} km/h).`]);
         else if (c.wind_gusts_10m >= 60) items.push(['warn', `Rafales fortes (${round(c.wind_gusts_10m)} km/h).`]);
-        if (dl.temperature_2m_max[0] >= 35) items.push(['danger', `Forte chaleur aujourd'hui (max ${round(dl.temperature_2m_max[0])}°C) : hydrate-toi, évite l'effort en plein soleil.`]);
+        if (dl.temperature_2m_max[0] >= 35) items.push(['danger', `Forte chaleur aujourd'hui (max ${round(dl.temperature_2m_max[0])}°C) : hydratez-vous et évitez l'effort en plein soleil.`]);
         else if (dl.temperature_2m_max[0] >= 30) items.push(['warn', `Il fera chaud (max ${round(dl.temperature_2m_max[0])}°C).`]);
         if (dl.temperature_2m_min[0] <= 0) items.push(['warn', `Gel possible (min ${round(dl.temperature_2m_min[0])}°C) : risque de verglas.`]);
         if (dl.uv_index_max[0] >= 8) items.push(['danger', `Indice UV très élevé (${dl.uv_index_max[0].toFixed(0)}) : protection solaire indispensable.`]);
         else if (dl.uv_index_max[0] >= 6) items.push(['warn', `Indice UV élevé (${dl.uv_index_max[0].toFixed(0)}).`]);
-        if (vis != null && vis < 1000) items.push(['warn', 'Visibilité réduite (brouillard) : prudence sur la route.']);
+        if (vis != null && vis < 1000) items.push(['warn', 'Visibilité réduite (brouillard) : soyez prudent sur la route.']);
         if (state.rainMsg) items.push(['info', state.rainMsg]);
         else if ((dl.precipitation_probability_max[0] ?? 0) >= 60) items.push(['info', `Pluie probable aujourd'hui (${dl.precipitation_probability_max[0]}%).`]);
     }
-    if (a?.european_aqi > 80) items.push(['danger', `Air de mauvaise qualité (indice ${a.european_aqi}) : limite les efforts en extérieur.`]);
+    if (a?.european_aqi > 80) items.push(['danger', `Air de mauvaise qualité (indice ${a.european_aqi}) : limitez les efforts en extérieur.`]);
     else if (a?.european_aqi > 60) items.push(['warn', `Air médiocre (indice ${a.european_aqi}).`]);
     const heavy = Object.entries(state.pollen).filter(([, v]) => v >= 50);
     if (heavy.length) items.push(['warn', `Pollens élevés : ${heavy.map(([n]) => n).join(', ')}.`]);
@@ -562,6 +547,7 @@ function renderAlerts() {
 
 // ============ APPAREIL & RÉSEAU ============
 const deviceExtra = {};
+const NET_TYPES = { 'slow-2g': '2G (très lent)', '2g': '2G', '3g': '3G', '4g': '4G ou plus' };
 
 function detectOS(ua) {
     if (/Android/.test(ua)) return 'Android';
@@ -601,19 +587,17 @@ function gpuName() {
 function renderDevice() {
     const ua = navigator.userAgent, conn = navigator.connection;
     const items = [
-        ['OS', navigator.userAgentData?.platform || detectOS(ua)],
+        ['Système', navigator.userAgentData?.platform || detectOS(ua)],
         ['Navigateur', detectBrowser(ua)],
-        ['Écran', `${screen.width} × ${screen.height} (${window.devicePixelRatio || 1}x)`],
+        ['Écran', `${screen.width} × ${screen.height} (densité ${window.devicePixelRatio || 1}x)`],
         ['Langue', navigator.language || 'Inconnue'],
-        ['Fuseau', Intl.DateTimeFormat().resolvedOptions().timeZone],
-        ['Cœurs logiques', navigator.hardwareConcurrency || '--'],
-        ['GPU', deviceExtra.gpu || '--'],
-        ['En ligne', navigator.onLine ? '✅ Oui' : '❌ Non'],
-        ['Réseau', conn ? (conn.effectiveType || conn.type || 'Inconnu') : 'API non supportée'],
+        ['Fuseau horaire', Intl.DateTimeFormat().resolvedOptions().timeZone],
+        ['Carte graphique', deviceExtra.gpu || '--'],
+        ['Connexion', navigator.onLine ? '✅ En ligne' : '❌ Hors ligne'],
+        ['Type de réseau', conn ? (NET_TYPES[conn.effectiveType] || conn.effectiveType || 'Inconnu') : 'Non disponible'],
     ];
-    if (navigator.deviceMemory) items.splice(6, 0, ['Mémoire (approx.)', `${navigator.deviceMemory} Go`]);
-    if (deviceExtra.arch) items.splice(6, 0, ['Architecture', deviceExtra.arch]);
-    if (conn?.downlink != null) items.push(['Débit estimé', `${conn.downlink} Mbps`], ['Latence estimée', `${conn.rtt} ms`]);
+    if (deviceExtra.arch) items.splice(5, 0, ['Architecture', deviceExtra.arch]);
+    if (conn?.downlink != null) items.push(['Débit estimé', `${conn.downlink} Mb/s`], ['Latence estimée', `${conn.rtt} ms`]);
     metrics('device-metrics', items);
 }
 
@@ -701,7 +685,7 @@ async function initBattery() {
             if (b.charging && Number.isFinite(b.chargingTime)) time = b.chargingTime ? `${t(b.chargingTime)} avant 100%` : 'Chargée';
             else if (!b.charging && Number.isFinite(b.dischargingTime)) time = `${t(b.dischargingTime)} restantes`;
             metrics('battery-metrics', [['Niveau', `${level}%`, level, level < 20 ? 'progress-gpu' : 'progress-cpu'],
-                ['État', b.charging ? '🔌 En charge' : '🔋 Sur batterie'], ['Autonomie', time]]);
+            ['État', b.charging ? '🔌 En charge' : '🔋 Sur batterie'], ['Autonomie', time]]);
         };
         show($('#battery-card'));
         render();
@@ -715,7 +699,7 @@ const motion = { a: null, b: null, g: null, x: null, y: null, z: null };
 function renderMotion() {
     const f = (v, n = 1) => (v == null ? '--' : v.toFixed(n));
     metrics('orient-metrics', [['Alpha (Z)', `${f(motion.a)}°`], ['Beta (X)', `${f(motion.b)}°`], ['Gamma (Y)', `${f(motion.g)}°`],
-        ['Accél. X', `${f(motion.x, 2)} m/s²`], ['Accél. Y', `${f(motion.y, 2)} m/s²`], ['Accél. Z', `${f(motion.z, 2)} m/s²`]]);
+    ['Accél. X', `${f(motion.x, 2)} m/s²`], ['Accél. Y', `${f(motion.y, 2)} m/s²`], ['Accél. Z', `${f(motion.z, 2)} m/s²`]]);
 }
 
 function startMotion() {
@@ -754,11 +738,15 @@ const clock = (unix) => new Date(unix * 1000).toLocaleTimeString('fr-FR', { hour
 
 function initMap() {
     if (typeof L === 'undefined') return setStatus('map', 'error', 'Leaflet indisponible');
-    const m = mapState.map = L.map('map', { minZoom: 2, maxZoom: 10, worldCopyJump: true }).setView([46.6, 2.4], 5);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        subdomains: 'abcd', maxZoom: 19,
-        attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/attributions">CARTO</a>',
+    const m = mapState.map = L.map('map', { minZoom: 2, maxZoom: 10, worldCopyJump: true, zoomControl: false }).setView([46.6, 2.4], 5);
+    L.control.zoom({ zoomInTitle: 'Zoom avant', zoomOutTitle: 'Zoom arrière' }).addTo(m);
+    m.attributionControl.setPrefix('<a href="https://leafletjs.com">Leaflet</a>');
+    // fond de carte sans clé d'API, étiquettes en français (inversé en mode sombre via le CSS)
+    L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+        subdomains: 'abc', maxZoom: 19, className: 'base-tiles',
+        attribution: '© <a href="https://www.openstreetmap.org/copyright">Contributeurs OpenStreetMap</a> · Tuiles <a href="https://www.openstreetmap.fr">OpenStreetMap France</a>',
     }).addTo(m);
+    m.createPane('radar').style.zIndex = 250; // le radar n'est pas inversé par le thème sombre
     mapState.quakes = L.layerGroup().addTo(m);
     mapState.iss = L.marker([0, 0], {
         icon: L.divIcon({ className: 'iss-icon', html: '🛰️', iconSize: [24, 24], iconAnchor: [12, 12] }), zIndexOffset: 1000,
@@ -766,7 +754,7 @@ function initMap() {
     $('#radar-toggle').addEventListener('click', toggleRadar);
     $('#radar-play').addEventListener('click', playRadar);
     setTimeout(() => m.invalidateSize(), 300);
-    setStatus('map', 'ok', 'Live');
+    setStatus('map', 'ok', 'En direct');
     loadRadar();
     renderQuakes();
     updateMapLocation();
@@ -777,7 +765,7 @@ function updateMapLocation() {
     if (!map || state.lat === null) return;
     const pos = [state.lat, state.lon];
     if (mapState.you) mapState.you.setLatLng(pos);
-    else mapState.you = L.circleMarker(pos, { radius: 8, color: '#00d4aa', fillColor: '#00d4aa', fillOpacity: 0.6, weight: 2 }).bindTooltip('Toi').addTo(map);
+    else mapState.you = L.circleMarker(pos, { radius: 8, color: '#00d4aa', fillColor: '#00d4aa', fillOpacity: 0.6, weight: 2 }).bindTooltip('Vous').addTo(map);
     map.setView(pos, 6); // le radar s'arrête au zoom 7
 }
 
@@ -791,7 +779,7 @@ async function loadRadar() {
         const last = past[past.length - 1];
         if (mapState.radar) mapState.radar.setUrl(radarUrl(last));
         else {
-            mapState.radar = L.tileLayer(radarUrl(last), { opacity: 0.65, maxNativeZoom: 7, maxZoom: 10 });
+            mapState.radar = L.tileLayer(radarUrl(last), { opacity: 0.65, maxNativeZoom: 7, maxZoom: 10, pane: 'radar' });
             if ($('#radar-toggle').classList.contains('active')) mapState.radar.addTo(mapState.map);
         }
         setText('radar-time', `Radar : ${clock(last.time)}`);
@@ -857,7 +845,7 @@ function renderCalendar() {
 function renderHolidays() {
     $('#holiday-list').innerHTML = state.holidays.map((h) => {
         const n = daysUntil(h.date);
-        const when = n === 0 ? "Aujourd'hui" : n === 1 ? 'Demain' : `J-${n}`;
+        const when = whenLabel(n);
         const day = new Date(`${h.date}T12:00`).toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
         return `<div class="row"><div>${esc(h.name)}<small>${esc(day)}</small></div><span class="mono">${when}</span></div>`;
     }).join('');
@@ -885,13 +873,13 @@ async function loadSpace() {
         const label = kp < 3.5 ? 'Calme' : KP_LABELS[Math.min(9, round(kp))];
         const t = list[list.length - 1].time;
         metrics('space-metrics', [
-            ['Kp actuel', kp.toFixed(1), (kp / 9) * 100, kp >= 5 ? 'progress-gpu' : 'progress-cpu'],
+            ['Indice Kp actuel', kp.toFixed(1), (kp / 9) * 100, kp >= 5 ? 'progress-gpu' : 'progress-cpu'],
             ['État', label], ['Max sur 24 h', max.toFixed(1)],
             ['Mesure', t ? ago(Date.parse(t.endsWith('Z') ? t : `${t}Z`)) : '--'],
         ]);
         setText('space-hint', kp >= 7 ? "Aurores possibles à basse latitude (jusqu'en France)."
             : kp >= 5 ? "Aurores probables en Scandinavie, possibles plus au sud."
-            : 'Activité calme : aurores limitées aux régions polaires.');
+                : 'Activité calme : aurores limitées aux régions polaires.');
         setStatus('space', kp >= 7 ? 'error' : kp >= 5 ? 'warn' : 'ok', label);
     } catch (e) {
         console.error('Space:', e);
@@ -905,7 +893,7 @@ async function loadMarkets() {
     try {
         const d = await api('markets');
         const items = [];
-        if (d.fx) for (const [cur, rate] of Object.entries(d.fx)) items.push([`1 € en ${cur}`, rate.toFixed(cur === 'JPY' ? 2 : 4)]);
+        if (d.fx) for (const [cur, rate] of Object.entries(d.fx)) items.push([currencyName(cur), `${rate.toFixed(cur === 'JPY' ? 2 : 4)} ${cur}`]);
         if (d.crypto) {
             for (const [id, name] of [['bitcoin', 'Bitcoin'], ['ethereum', 'Ethereum']]) {
                 const c = d.crypto[id];
@@ -938,7 +926,7 @@ async function loadPower() {
             ['Intensité CO₂', `${co2} g/kWh`],
         ]);
         const tip = co2 <= 40 ? 'Bon moment pour consommer : électricité très bas carbone.'
-            : co2 >= 100 ? 'Électricité carbonée : décale les gros usages si possible.' : 'Mix électrique dans la moyenne.';
+            : co2 >= 100 ? 'Électricité carbonée : décalez les gros usages si possible.' : 'Mix électrique dans la moyenne.';
         setText('power-hint', `${tip} Mesure ${ago(Date.parse(d.time))}.`);
         setStatus('power', co2 < 60 ? 'ok' : co2 < 100 ? 'warn' : 'error', label);
     } catch (e) {
@@ -1033,7 +1021,7 @@ function renderChips() {
 
 async function loadWorld() {
     const box = $('#world-list'), asked = selected.join(',');
-    if (!selected.length) { box.innerHTML = '<div class="empty">Sélectionne au moins un pays.</div>'; return; }
+    if (!selected.length) { box.innerHTML = '<div class="empty">Sélectionnez au moins un pays.</div>'; return; }
     setStatus('world', 'pending', 'Chargement...');
     try {
         const d = await api('world-holidays', { countries: asked });
@@ -1042,7 +1030,7 @@ async function loadWorld() {
             const list = d[cc];
             const rows = !list ? '<div class="empty">Indisponible</div>' : list.map((h) => {
                 const n = daysUntil(h.date);
-                return `<div class="h" title="${esc(h.local)}"><span>${esc(h.name)}<br><small class="empty">${esc(fmtDay(h.date))}</small></span><span class="mono${n === 0 ? ' today-flag' : ''}">${n === 0 ? '🎉 ' : ''}${whenLabel(n)}</span></div>`;
+                return `<div class="h" title="${esc(h.local)}"><span>${esc(frName(h.name))}<br><small class="empty">${esc(fmtDay(h.date))}</small></span><span class="mono${n === 0 ? ' today-flag' : ''}">${n === 0 ? '🎉 ' : ''}${whenLabel(n)}</span></div>`;
             }).join('');
             return `<div class="country"><h3>${flag(cc)} ${esc(countryName(cc))}</h3>${rows}</div>`;
         }).join('');
@@ -1087,10 +1075,430 @@ async function loadMarine() {
     }
 }
 
+// ============ THÈME CLAIR / SOMBRE ============
+const THEME_KEY = 'live-info:theme';
+
+function initTheme() {
+    const root = document.documentElement, btn = $('#theme-toggle');
+    const apply = (t) => {
+        root.dataset.theme = t;
+        btn.textContent = t === 'dark' ? '☀️ Mode clair' : '🌙 Mode sombre';
+        btn.setAttribute('aria-label', t === 'dark' ? 'Passer en mode clair' : 'Passer en mode sombre');
+    };
+    apply(root.dataset.theme === 'light' ? 'light' : 'dark');
+    btn.addEventListener('click', () => {
+        const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+        apply(next);
+        try { localStorage.setItem(THEME_KEY, next); } catch { /* ignore */ }
+    });
+}
+
+// ============ HEURES DANS LE MONDE (villes personnalisables) ============
+const CLOCKS_KEY = 'live-info:clocks';
+const DEFAULT_CLOCKS = [
+    { label: 'Ici', tz: null }, { label: 'UTC', tz: 'UTC' }, { label: 'Londres', tz: 'Europe/London' },
+    { label: 'New York', tz: 'America/New_York' }, { label: 'Tokyo', tz: 'Asia/Tokyo' },
+    { label: 'Sydney', tz: 'Australia/Sydney' }, { label: 'Dubaï', tz: 'Asia/Dubai' },
+];
+let clocks = DEFAULT_CLOCKS;
+try {
+    const saved = JSON.parse(localStorage.getItem(CLOCKS_KEY));
+    if (Array.isArray(saved)) clocks = saved.filter((c) => c && typeof c.label === 'string' && (c.tz === null || typeof c.tz === 'string'));
+} catch { /* ignore */ }
+const saveClocks = () => { try { localStorage.setItem(CLOCKS_KEY, JSON.stringify(clocks)); } catch { /* ignore */ } };
+
+function tzOffsetMin(tz, d) {
+    const t = new Date(Math.floor(d.getTime() / 1000) * 1000);
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric',
+    }).formatToParts(t);
+    const p = Object.fromEntries(parts.map((x) => [x.type, +x.value]));
+    return round((Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - t.getTime()) / 60000);
+}
+
+function diffLabel(min) {
+    if (min === 0) return 'même heure';
+    const a = Math.abs(min), h = Math.floor(a / 60), m = a % 60;
+    return `${min > 0 ? '+' : '−'}${h} h${m ? ` ${String(m).padStart(2, '0')}` : ''}`;
+}
+
+function renderClockList() {
+    $('#clocks').innerHTML = clocks.length
+        ? clocks.map((c, i) => `<div class="row"><div>${esc(c.label)}<small data-clock-meta="${i}"></small></div>` +
+            `<div class="clock-time"><span class="mono" data-clock-time="${i}">--:--:--</span>` +
+            `<button class="x" type="button" data-clock-del="${i}" aria-label="Retirer ${esc(c.label)}">✕</button></div></div>`).join('')
+        : '<div class="empty">Aucune horloge. Ajoutez une ville ci-dessus.</div>';
+    tickClocks();
+}
+
+function tickClocks() {
+    const now = new Date(), localOff = -now.getTimezoneOffset();
+    clocks.forEach((c, i) => {
+        try {
+            const opts = c.tz ? { timeZone: c.tz } : {};
+            const time = now.toLocaleTimeString('fr-FR', { ...opts, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            const day = now.toLocaleDateString('fr-FR', { ...opts, weekday: 'short', day: 'numeric', month: 'short' });
+            const diff = c.tz ? diffLabel(tzOffsetMin(c.tz, now) - localOff) : 'votre fuseau';
+            const t = document.querySelector(`[data-clock-time="${i}"]`), m = document.querySelector(`[data-clock-meta="${i}"]`);
+            if (t) t.textContent = time;
+            if (m) m.textContent = `${day} · ${diff}`;
+        } catch { /* fuseau invalide : ignoré */ }
+    });
+}
+
+function initClocks() {
+    renderClockList();
+    every(1000, tickClocks);
+    const input = $('#clock-search'), box = $('#clock-results');
+    let timer = null, found = [];
+    const close = () => hide(box);
+
+    const add = (i) => {
+        const r = found[i];
+        if (!r?.timezone) return;
+        const label = uniq([r.name, r.country]).join(', ');
+        if (clocks.length < 12 && !clocks.some((c) => c.tz === r.timezone && c.label === label)) {
+            clocks = [...clocks, { label, tz: r.timezone }];
+            saveClocks();
+            renderClockList();
+        }
+        input.value = '';
+        close();
+    };
+
+    input.addEventListener('input', () => {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        if (q.length < 2) return close();
+        timer = setTimeout(async () => {
+            try {
+                found = ((await api('geocode', { q })).results || []).filter((r) => r.timezone);
+                box.innerHTML = found.length
+                    ? found.map((r, i) => `<button type="button" data-i="${i}">${esc(r.name)} <small>${esc(uniq([r.admin1, r.country]).join(', '))} · ${esc(r.timezone)}</small></button>`).join('')
+                    : '<button type="button" disabled>Aucun résultat</button>';
+                show(box);
+            } catch (e) { console.error('Horloges:', e); close(); }
+        }, 300);
+    });
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') add(0); if (e.key === 'Escape') close(); });
+    box.addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) add(+b.dataset.i); });
+    document.addEventListener('click', (e) => { if (!e.target.closest('#clocks-card .search')) close(); });
+    $('#clocks').addEventListener('click', (e) => {
+        const b = e.target.closest('button[data-clock-del]');
+        if (!b) return;
+        clocks = clocks.filter((_, i) => i !== +b.dataset.clockDel);
+        saveClocks();
+        renderClockList();
+    });
+}
+
+// ============ NOMS FRANÇAIS (jours fériés, devises) ============
+const HOLIDAY_FR = {
+    "New Year's Day": "Jour de l'An", 'Epiphany': 'Épiphanie', 'Good Friday': 'Vendredi saint', 'Holy Thursday': 'Jeudi saint',
+    'Maundy Thursday': 'Jeudi saint', 'Holy Saturday': 'Samedi saint', 'Easter Saturday': 'Samedi de Pâques',
+    'Easter Sunday': 'Dimanche de Pâques', 'Easter Monday': 'Lundi de Pâques', 'Labour Day': 'Fête du Travail',
+    'Labor Day': 'Fête du Travail', 'May Day': 'Fête du Travail', "International Workers' Day": 'Fête du Travail',
+    'Ascension Day': 'Ascension', 'Whit Monday': 'Lundi de Pentecôte', 'Pentecost Monday': 'Lundi de Pentecôte',
+    'Pentecost': 'Pentecôte', 'Corpus Christi': 'Fête-Dieu', 'Assumption Day': 'Assomption',
+    'Assumption of Mary': 'Assomption', "All Saints' Day": 'Toussaint', "All Souls' Day": 'Jour des défunts',
+    'Immaculate Conception': 'Immaculée Conception', 'Christmas Eve': 'Veille de Noël', 'Christmas Day': 'Noël',
+    'Boxing Day': 'Lendemain de Noël', "St. Stephen's Day": 'Lendemain de Noël', 'Second Day of Christmas': 'Lendemain de Noël',
+    "New Year's Eve": 'Réveillon du Nouvel An', 'Independence Day': "Fête de l'Indépendance",
+    'Thanksgiving Day': "Thanksgiving (action de grâce)", 'Thanksgiving': "Thanksgiving (action de grâce)",
+    'Memorial Day': 'Memorial Day (hommage aux soldats)', 'Veterans Day': 'Journée des anciens combattants',
+    'Columbus Day': 'Jour de Christophe Colomb', "Washington's Birthday": 'Fête des Présidents', "Presidents' Day": 'Fête des Présidents',
+    'Martin Luther King, Jr. Day': 'Jour de Martin Luther King', 'Juneteenth': "Juneteenth (fin de l'esclavage)",
+    'Juneteenth National Independence Day': "Juneteenth (fin de l'esclavage)", 'Victoria Day': 'Fête de la reine Victoria',
+    'Canada Day': 'Fête du Canada', 'Civic Holiday': 'Congé civique', 'Remembrance Day': 'Jour du Souvenir',
+    'National Day for Truth and Reconciliation': 'Journée nationale de la vérité et de la réconciliation',
+    'Early May Bank Holiday': 'Jour férié de début mai', 'Spring Bank Holiday': 'Jour férié de fin mai',
+    'Summer Bank Holiday': 'Jour férié de fin août', "St Patrick's Day": 'Saint-Patrick', 'German Unity Day': "Jour de l'Unité allemande",
+    'Reformation Day': 'Fête de la Réforme', 'Day of Repentance and Prayer': 'Jour de pénitence et de prière',
+    "International Women's Day": 'Journée internationale des droits des femmes', 'Constitution Day': 'Jour de la Constitution',
+    'Liberation Day': 'Fête de la Libération', 'Republic Day': 'Fête de la République', 'National Day': 'Fête nationale',
+    'Coming of Age Day': 'Jour de la majorité', 'National Foundation Day': 'Fête de la fondation nationale',
+    "The Emperor's Birthday": "Anniversaire de l'empereur", 'Vernal Equinox Day': 'Équinoxe de printemps', 'Showa Day': 'Jour de Shōwa',
+    'Constitution Memorial Day': 'Jour de la Constitution', 'Greenery Day': 'Jour de la verdure', "Children's Day": 'Jour des enfants',
+    'Marine Day': 'Jour de la mer', 'Mountain Day': 'Jour de la montagne', 'Respect for the Aged Day': 'Jour du respect des aînés',
+    'Autumnal Equinox Day': "Équinoxe d'automne", 'Sports Day': 'Jour des sports', 'Culture Day': 'Jour de la culture',
+    'Labor Thanksgiving Day': "Jour d'action de grâce du travail", 'Spring Festival': 'Fête du Printemps (Nouvel An chinois)',
+    'Qingming Festival': 'Fête de Qingming', 'Tomb-Sweeping Day': 'Fête de Qingming', 'Dragon Boat Festival': 'Fête des bateaux-dragons',
+    'Mid-Autumn Festival': 'Fête de la mi-automne', 'Gandhi Jayanti': 'Anniversaire de Gandhi', 'Diwali': 'Diwali (fête des lumières)',
+    'Holi': 'Holi (fête des couleurs)', "Tiradentes' Day": 'Jour de Tiradentes', 'Carnival': 'Carnaval',
+    'Republic Proclamation Day': 'Proclamation de la République', 'Black Awareness Day': 'Journée de la conscience noire',
+    'Anzac Day': "Journée de l'Anzac", 'Australia Day': "Fête de l'Australie", "King's Birthday": 'Anniversaire du roi',
+    "Queen's Birthday": 'Anniversaire de la reine',
+};
+const frName = (name) => HOLIDAY_FR[name] || name;
+
+let currencyNames = null;
+try { currencyNames = new Intl.DisplayNames(['fr'], { type: 'currency' }); } catch { /* non supporté */ }
+const currencyName = (code) => {
+    try { const n = currencyNames?.of(code) || code; return n.charAt(0).toUpperCase() + n.slice(1); } catch { return code; }
+};
+
+// ============ OUTILS PRATIQUES ============
+const fmtNum = (v, d = 6) => (Number.isFinite(v) ? v.toLocaleString('fr-FR', { maximumFractionDigits: d }) : '--');
+const fmtEur = (v) => v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+const numVal = (sel) => parseFloat($(sel).value);
+const pad2 = (n) => String(n).padStart(2, '0');
+
+// --- TVA et remises
+function renderCalc() {
+    const amount = numVal('#vat-amount'), rate = numVal('#vat-rate') / 100, isTtc = $('#vat-mode').value === 'ttc';
+    if (Number.isFinite(amount)) {
+        const ht = isTtc ? amount / (1 + rate) : amount, ttc = isTtc ? amount : amount * (1 + rate);
+        metrics('vat-result', [['Hors taxes (HT)', fmtEur(ht)], ['TVA', fmtEur(ttc - ht)], ['TTC', fmtEur(ttc)]]);
+    } else metrics('vat-result', []);
+    const price = numVal('#disc-price'), pct = numVal('#disc-pct');
+    if (Number.isFinite(price) && Number.isFinite(pct)) {
+        const saved = (price * pct) / 100;
+        metrics('disc-result', [['Prix après remise', fmtEur(price - saved)], ['Économie', fmtEur(saved)]]);
+    } else metrics('disc-result', []);
+}
+
+// --- Convertisseur d'unités
+const UNITS = {
+    'Longueur': { 'mètre (m)': 1, 'kilomètre (km)': 1000, 'centimètre (cm)': 0.01, 'millimètre (mm)': 0.001, 'mile': 1609.344, 'yard': 0.9144, 'pied (ft)': 0.3048, 'pouce (in)': 0.0254, 'mille marin': 1852 },
+    'Masse': { 'kilogramme (kg)': 1, 'gramme (g)': 0.001, 'tonne (t)': 1000, 'livre (lb)': 0.45359237, 'once (oz)': 0.028349523125 },
+    'Vitesse': { 'km/h': 1 / 3.6, 'm/s': 1, 'mph (miles/h)': 0.44704, 'nœud': 1852 / 3600 },
+    'Volume': { 'litre (L)': 1, 'millilitre (mL)': 0.001, 'mètre cube (m³)': 1000, 'gallon US': 3.785411784, 'gallon impérial': 4.54609, 'once liquide US': 0.0295735295625 },
+    'Surface': { 'mètre carré (m²)': 1, 'hectare (ha)': 10000, 'kilomètre carré (km²)': 1e6, 'acre': 4046.8564224, 'pied carré (ft²)': 0.09290304 },
+    'Température': { '°C': 1, '°F': 1, 'K': 1 },
+    'Durée': { 'seconde': 1, 'minute': 60, 'heure': 3600, 'jour': 86400, 'semaine': 604800 },
+};
+
+function convertUnit(cat, v, from, to) {
+    if (cat === 'Température') {
+        const c = from === '°C' ? v : from === '°F' ? ((v - 32) * 5) / 9 : v - 273.15;
+        return to === '°C' ? c : to === '°F' ? (c * 9) / 5 + 32 : c + 273.15;
+    }
+    return (v * UNITS[cat][from]) / UNITS[cat][to];
+}
+
+function initUnits() {
+    const cat = $('#u-cat'), from = $('#u-from'), to = $('#u-to');
+    cat.innerHTML = Object.keys(UNITS).map((c) => `<option>${esc(c)}</option>`).join('');
+    const calc = () => {
+        const v = parseFloat($('#u-val').value);
+        $('#u-result').textContent = Number.isFinite(v)
+            ? `${fmtNum(v)} ${from.value} = ${fmtNum(convertUnit(cat.value, v, from.value, to.value))} ${to.value}` : '--';
+    };
+    const fill = () => {
+        const names = Object.keys(UNITS[cat.value]);
+        from.innerHTML = to.innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join('');
+        to.selectedIndex = Math.min(1, names.length - 1);
+        calc();
+    };
+    cat.addEventListener('change', fill);
+    [from, to, $('#u-val')].forEach((el) => el.addEventListener('input', calc));
+    fill();
+}
+
+// --- Convertisseur de devises (taux BCE)
+async function initFx() {
+    const from = $('#fx-from'), to = $('#fx-to'), out = $('#fx-result');
+    let rates = null, date = null;
+    const calc = () => {
+        const a = parseFloat($('#fx-amount').value);
+        if (!rates || !Number.isFinite(a)) { out.textContent = '--'; return; }
+        out.textContent = `${fmtNum(a, 2)} ${from.value} = ${fmtNum((a / rates[from.value]) * rates[to.value], 2)} ${to.value}`;
+        const day = new Date(date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
+        setText('fx-hint', `Taux du ${day} (Banque centrale européenne). 1 ${from.value} = ${fmtNum(rates[to.value] / rates[from.value], 4)} ${to.value}.`);
+    };
+    try {
+        const d = await api('fx');
+        rates = { EUR: 1, ...d.rates }; date = d.date;
+        from.innerHTML = to.innerHTML = Object.keys(rates).sort()
+            .map((c) => `<option value="${c}">${c} - ${esc(currencyName(c))}</option>`).join('');
+        from.value = 'EUR'; to.value = 'USD';
+    } catch (e) {
+        console.error('Devises:', e);
+        out.textContent = 'Taux indisponibles pour le moment.';
+        return;
+    }
+    [from, to, $('#fx-amount')].forEach((el) => el.addEventListener('input', calc));
+    $('#fx-swap').addEventListener('click', () => { [from.value, to.value] = [to.value, from.value]; calc(); });
+    calc();
+}
+
+// --- Chronomètre et minuteur
+function beep() {
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [0, 0.35, 0.7].forEach((t) => {
+            const o = ctx.createOscillator(), g = ctx.createGain();
+            o.frequency.value = 880; g.gain.value = 0.2;
+            o.connect(g); g.connect(ctx.destination);
+            o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2);
+        });
+    } catch { /* audio indisponible */ }
+}
+
+function initTimers() {
+    // chronomètre
+    const sw = { running: false, start: 0, base: 0, laps: [] };
+    let swTimer = null;
+    const elapsed = () => sw.base + (sw.running ? performance.now() - sw.start : 0);
+    const fmtSw = (ms) => { const t = Math.floor(ms / 100); return `${pad2(Math.floor(t / 600))}:${pad2(Math.floor(t / 10) % 60)}.${t % 10}`; };
+    const paintSw = () => setText('sw-display', fmtSw(elapsed()));
+    const paintLaps = () => setText('sw-laps', sw.laps.slice(-5).reverse().join('  ·  '));
+    $('#sw-toggle').addEventListener('click', () => {
+        if (sw.running) {
+            sw.base = elapsed(); sw.running = false; clearInterval(swTimer);
+            $('#sw-toggle').textContent = 'Reprendre'; $('#sw-lap').disabled = true;
+        } else {
+            sw.start = performance.now(); sw.running = true; swTimer = setInterval(paintSw, 100);
+            $('#sw-toggle').textContent = 'Pause'; $('#sw-lap').disabled = false;
+        }
+        paintSw();
+    });
+    $('#sw-lap').addEventListener('click', () => {
+        const total = elapsed(), prev = sw.lastLap || 0;
+        sw.lastLap = total;
+        sw.laps.push(`Tour ${sw.laps.length + 1} : ${fmtSw(total - prev)} (total ${fmtSw(total)})`);
+        paintLaps();
+    });
+    $('#sw-reset').addEventListener('click', () => {
+        clearInterval(swTimer);
+        Object.assign(sw, { running: false, base: 0, laps: [], lastLap: 0 });
+        $('#sw-toggle').textContent = 'Démarrer'; $('#sw-lap').disabled = true;
+        paintSw(); paintLaps();
+    });
+
+    // minuteur
+    const tm = { running: false, end: 0, remaining: 0 };
+    let tmTimer = null;
+    const readTm = () => ((Math.max(0, parseInt($('#tm-min').value, 10) || 0) * 60) + Math.min(59, Math.max(0, parseInt($('#tm-sec').value, 10) || 0))) * 1000;
+    const paintTm = (ms) => { const s = Math.ceil(ms / 1000); setText('tm-display', `${pad2(Math.floor(s / 60))}:${pad2(s % 60)}`); };
+    const resetTm = () => {
+        clearInterval(tmTimer); tm.running = false; tm.remaining = readTm();
+        paintTm(tm.remaining); $('#tm-toggle').textContent = 'Démarrer';
+    };
+    ['#tm-min', '#tm-sec'].forEach((sel) => $(sel).addEventListener('input', () => { if (!tm.running) resetTm(); }));
+    $('#tm-reset').addEventListener('click', resetTm);
+    $('#tm-toggle').addEventListener('click', () => {
+        if (tm.running) {
+            tm.remaining = Math.max(0, tm.end - Date.now()); tm.running = false; clearInterval(tmTimer);
+            $('#tm-toggle').textContent = 'Reprendre';
+            return;
+        }
+        if (tm.remaining <= 0) tm.remaining = readTm();
+        if (tm.remaining <= 0) return;
+        tm.end = Date.now() + tm.remaining; tm.running = true;
+        $('#tm-toggle').textContent = 'Pause';
+        tmTimer = setInterval(() => {
+            const left = tm.end - Date.now();
+            if (left > 0) return paintTm(left);
+            clearInterval(tmTimer); tm.running = false; tm.remaining = 0;
+            setText('tm-display', '⏰ Terminé !'); $('#tm-toggle').textContent = 'Démarrer';
+            beep();
+        }, 200);
+    });
+    resetTm();
+}
+
+// --- Compte à rebours
+const CD_KEY = 'live-info:countdown';
+function initCountdown() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(CD_KEY)) || {}; } catch { /* ignore */ }
+    const label = $('#cd-label'), date = $('#cd-date');
+    label.value = saved.label || ''; date.value = saved.date || '';
+    const paint = () => {
+        const target = date.value ? new Date(date.value) : null;
+        if (!target || Number.isNaN(+target)) {
+            setText('cd-display', '--'); setText('cd-sub', 'Choisissez une date pour lancer le compte à rebours.'); return;
+        }
+        const ms = target - Date.now(), name = label.value.trim() || "l'événement";
+        if (ms <= 0) { setText('cd-display', 'Terminé'); setText('cd-sub', `La date de ${name} est passée.`); return; }
+        const d = Math.floor(ms / 864e5), h = Math.floor((ms % 864e5) / 36e5), m = Math.floor((ms % 36e5) / 6e4);
+        setText('cd-display', `${d} j ${pad2(h)} h ${pad2(m)} min`);
+        setText('cd-sub', `Avant ${name} : ${target.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`);
+    };
+    const save = () => {
+        try { localStorage.setItem(CD_KEY, JSON.stringify({ label: label.value, date: date.value })); } catch { /* ignore */ }
+        paint();
+    };
+    label.addEventListener('input', save);
+    date.addEventListener('input', save);
+    paint(); every(30e3, paint);
+}
+
+// --- Générateur de mot de passe
+const PWD_SETS = { lower: 'abcdefghijklmnopqrstuvwxyz', upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', digits: '0123456789', symbols: '!@#$%^&*()-_=+[]{};:,.?/' };
+
+function randomInt(max) { // tirage uniforme, sans biais de modulo
+    const limit = Math.floor(0x100000000 / max) * max, buf = new Uint32Array(1);
+    do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
+    return buf[0] % max;
+}
+
+function generatePassword() {
+    const sets = Object.keys(PWD_SETS).filter((k) => $(`#pwd-${k}`).checked).map((k) => PWD_SETS[k]);
+    const out = $('#pwd-out');
+    if (!sets.length) { out.value = ''; metrics('pwd-strength', [['Force', 'Choisissez un type de caractères']]); return; }
+    const len = +$('#pwd-len').value, pool = sets.join('');
+    let pwd;
+    do { pwd = Array.from({ length: len }, () => pool[randomInt(pool.length)]).join(''); }
+    while (sets.some((set) => ![...pwd].some((c) => set.includes(c)))); // au moins un caractère de chaque type choisi
+    out.value = pwd;
+    const bits = len * Math.log2(pool.length);
+    const label = bits < 40 ? 'Faible' : bits < 60 ? 'Moyen' : bits < 80 ? 'Fort' : 'Très fort';
+    metrics('pwd-strength', [['Force', label, Math.min(100, bits), bits < 60 ? 'progress-gpu' : 'progress-cpu'], ['Entropie', `${round(bits)} bits`]]);
+}
+
+function initPassword() {
+    $('#pwd-len').addEventListener('input', () => { setText('pwd-len-val', $('#pwd-len').value); generatePassword(); });
+    ['lower', 'upper', 'digits', 'symbols'].forEach((k) => $(`#pwd-${k}`).addEventListener('change', generatePassword));
+    $('#pwd-gen').addEventListener('click', generatePassword);
+    $('#pwd-copy').addEventListener('click', async () => {
+        const out = $('#pwd-out');
+        if (!out.value) return;
+        try { await navigator.clipboard.writeText(out.value); } catch { out.select(); document.execCommand('copy'); }
+        setText('pwd-copy', 'Copié ✓');
+        setTimeout(() => setText('pwd-copy', 'Copier'), 1500);
+    });
+    generatePassword();
+}
+
+// --- Bloc-notes
+const NOTES_KEY = 'live-info:notes';
+function initNotes() {
+    const ta = $('#notes');
+    try { ta.value = localStorage.getItem(NOTES_KEY) || ''; } catch { /* ignore */ }
+    const info = () => setText('notes-info', `${ta.value.length} caractère${ta.value.length > 1 ? 's' : ''}`);
+    ta.addEventListener('input', () => {
+        try { localStorage.setItem(NOTES_KEY, ta.value); } catch { /* ignore */ }
+        info();
+    });
+    $('#notes-clear').addEventListener('click', () => {
+        if (!ta.value || confirm('Effacer le bloc-notes ?')) {
+            ta.value = '';
+            try { localStorage.removeItem(NOTES_KEY); } catch { /* ignore */ }
+            info();
+        }
+    });
+    info();
+}
+
+function initTools() {
+    ['#vat-amount', '#vat-rate', '#vat-mode', '#disc-price', '#disc-pct'].forEach((sel) => $(sel).addEventListener('input', renderCalc));
+    renderCalc();
+    initUnits();
+    initFx();
+    initTimers();
+    initCountdown();
+    initPassword();
+    initNotes();
+}
+
 // ============ INITIALISATION ============
 function init() {
     initDevice();
-    renderClocks(); every(1000, renderClocks);
+    initTheme();
+    initClocks();
+    initTools();
     renderSun(); every(3600e3, renderSun);
     initSearch();
     initBattery();
