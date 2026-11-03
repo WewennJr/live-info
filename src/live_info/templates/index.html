@@ -1,349 +1,416 @@
-"""Live Info - real-time dashboard (Flask).
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Tableau de bord en temps réel : météo, radar de pluie, qualité de l'air, carburants, électricité, jours fériés, outils pratiques et plus.">
+    <title>Live Info - Tableau de bord en temps réel</title>
+    <script>
+        /* applique le thème avant l'affichage pour éviter un flash */
+        try {
+            var t = localStorage.getItem('live-info:theme');
+            document.documentElement.dataset.theme = t || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+        } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
+    <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
+</head>
+<body>
+    <header class="topbar">
+        <h1>Live Info</h1>
+        <div class="search">
+            <input id="search" type="search" placeholder="Rechercher une ville…" autocomplete="off" aria-label="Rechercher une ville">
+            <div class="results hidden" id="search-results"></div>
+        </div>
+        <button class="btn active" id="btn-gps" type="button">📍 Ma position</button>
+        <button class="btn" id="theme-toggle" type="button">🌙 Mode sombre</button>
+        <div class="loc-name" id="location-text">Localisation en cours…</div>
+    </header>
 
-The server is a cached proxy to public APIs that need no key.
-"""
-import math
-import os
-import re
-import time
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
-from zoneinfo import ZoneInfo
+    <main class="grid" id="dashboard">
+        <!-- Alertes & conseils -->
+        <section class="card wide" id="alerts-card">
+            <header class="card-header"><h2 class="card-title">🔔 Alertes et conseils</h2></header>
+            <div class="alerts" id="alerts"><div class="empty">En attente des données…</div></div>
+        </section>
 
-import requests
-from flask import Flask, jsonify, render_template, request
+        <!-- Météo -->
+        <section class="card" id="weather-card">
+            <header class="card-header">
+                <h2 class="card-title">🌤️ Météo</h2>
+                <span class="status-badge status-pending" id="weather-status">Chargement</span>
+            </header>
+            <div class="weather-main">
+                <span class="weather-icon" id="weather-icon" aria-hidden="true">--</span>
+                <div>
+                    <div class="weather-temp mono" id="weather-temp">--°C</div>
+                    <div class="weather-desc" id="weather-desc">--</div>
+                </div>
+            </div>
+            <div class="metric-grid" id="weather-metrics"></div>
+            <div class="timestamp">Dernière mise à jour : <span id="weather-time" class="mono">--</span></div>
+        </section>
 
-app = Flask(__name__)
+        <!-- Pluie imminente -->
+        <section class="card" id="nowcast-card">
+            <header class="card-header"><h2 class="card-title">🌧️ Pluie dans les 2 heures</h2></header>
+            <div class="big-line" id="nowcast-summary">--</div>
+            <div class="nowcast" id="nowcast-bars" aria-hidden="true"></div>
+            <div class="nowcast-labels"><span>maintenant</span><span>+1 h</span><span>+2 h</span></div>
+            <div class="sub">Aujourd'hui</div>
+            <div class="metric-grid" id="today-metrics"></div>
+        </section>
 
-session = requests.Session()
-session.headers["User-Agent"] = "live-info/2.0 (https://github.com/WewennJr/live-info)"
+        <!-- Carte en direct -->
+        <section class="card tall" id="map-card">
+            <header class="card-header">
+                <h2 class="card-title">🗺️ Carte en direct</h2>
+                <span class="status-badge status-pending" id="map-status">Chargement</span>
+            </header>
+            <div id="map" class="map" role="application" aria-label="Carte : radar de pluie, station spatiale et séismes"></div>
+            <div class="map-bar">
+                <button class="btn active" id="radar-toggle" type="button">🌧️ Radar</button>
+                <button class="btn" id="radar-play" type="button">▶ Animer (2 h)</button>
+                <span class="hint" id="radar-time">--</span>
+            </div>
+            <div class="hint">🟢 Votre position · 🛰️ ISS · 🔴 Séismes · Radar : <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a></div>
+        </section>
 
-OPEN_METEO = "https://api.open-meteo.com/v1/forecast"
-AIR_QUALITY = "https://air-quality-api.open-meteo.com/v1/air-quality"
-GEOCODING = "https://geocoding-api.open-meteo.com/v1/search"
-NOMINATIM = "https://nominatim.openstreetmap.org/reverse"
-FUEL_API = ("https://data.economie.gouv.fr/api/explore/v2.1/catalog/datasets/"
-            "prix-des-carburants-en-france-flux-instantane-v2/records")
-USGS_QUAKES = "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson"
-ISS_API = "https://api.wheretheiss.at/v1/satellites/25544"
-RAINVIEWER = "https://api.rainviewer.com/public/weather-maps.json"
-SWPC_KP = "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
-FX_API = "https://api.frankfurter.dev/v1/latest"
-COINGECKO = "https://api.coingecko.com/api/v3/simple/price"
-HOLIDAYS = "https://calendrier.api.gouv.fr/jours-feries/metropole"
-MARINE = "https://marine-api.open-meteo.com/v1/marine"
-ECO2MIX = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records"
-SCHOOL = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records"
-NAGER = "https://date.nager.at/api/v3"
-PARIS = ZoneInfo("Europe/Paris")
+        <!-- Calendrier -->
+        <section class="card tall" id="calendar-card">
+            <header class="card-header"><h2 class="card-title">📅 Aujourd'hui</h2></header>
+            <div class="date-big" id="date-big">--</div>
+            <div class="metric-grid" id="date-metrics"></div>
+            <div class="sub">Prochains jours fériés en France</div>
+            <div class="rows" id="holiday-list"><div class="empty">Chargement…</div></div>
+        </section>
 
-FUELS = ["gazole", "e10", "sp95", "sp98", "e85", "gplc"]
+        <!-- Prochaines heures -->
+        <section class="card wide" id="hourly-card">
+            <header class="card-header"><h2 class="card-title">🕒 Prochaines 24 heures</h2></header>
+            <div class="chart" id="hourly-chart"></div>
+            <div class="hint">Courbe : température (°C). Barres : probabilité de pluie (%).</div>
+        </section>
 
-_cache = {}
+        <!-- 7 jours -->
+        <section class="card wide" id="daily-card">
+            <header class="card-header"><h2 class="card-title">📆 Prévisions sur 7 jours</h2></header>
+            <div class="days" id="daily"></div>
+        </section>
 
+        <!-- Jours fériés dans le monde -->
+        <section class="card wide" id="world-card">
+            <header class="card-header">
+                <h2 class="card-title">🌍 Jours fériés dans le monde</h2>
+                <span class="status-badge status-pending" id="world-status">Chargement</span>
+            </header>
+            <div class="chips" id="country-chips" role="group" aria-label="Pays affichés"></div>
+            <div class="world-grid" id="world-list"></div>
+            <div class="hint">Jours fériés nationaux officiels (source : Nager.Date). Cliquez sur un pays pour l'afficher ou le masquer.</div>
+        </section>
 
-# ---------- utilitaires ----------
-def cached_get(url, params, ttl):
-    """GET JSON avec cache mémoire (TTL en secondes)."""
-    key = (url, tuple(sorted(params.items())))
-    hit = _cache.get(key)
-    if hit and time.time() - hit[0] < ttl:
-        return hit[1]
-    resp = session.get(url, params=params, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    if len(_cache) > 500:
-        _cache.clear()
-    _cache[key] = (time.time(), data)
-    return data
+        <!-- Air & pollens -->
+        <section class="card" id="air-card">
+            <header class="card-header">
+                <h2 class="card-title">🌫️ Qualité de l'air</h2>
+                <span class="status-badge status-pending" id="air-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="air-metrics"></div>
+            <div class="hint" id="pollen-text"></div>
+            <div class="timestamp">Dernière mise à jour : <span id="air-time" class="mono">--</span></div>
+        </section>
 
+        <!-- Soleil & Lune -->
+        <section class="card" id="sun-card">
+            <header class="card-header"><h2 class="card-title">🌅 Soleil et Lune</h2></header>
+            <div class="metric-grid" id="sun-metrics"></div>
+        </section>
 
-def proxy(url, params, ttl):
-    try:
-        return jsonify(cached_get(url, params, ttl))
-    except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        <!-- Mer (masquée loin des côtes) -->
+        <section class="card hidden" id="marine-card">
+            <header class="card-header">
+                <h2 class="card-title">🌊 Mer et vagues</h2>
+                <span class="status-badge status-pending" id="marine-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="marine-metrics"></div>
+            <div class="hint">Modèle global : donnée indicative, ce n'est pas un bulletin marine officiel.</div>
+        </section>
 
+        <!-- GPS -->
+        <section class="card" id="gps-card">
+            <header class="card-header">
+                <h2 class="card-title">🧭 Position et trajet (GPS)</h2>
+                <span class="status-badge status-pending" id="gps-status">En attente</span>
+            </header>
+            <div class="gps-grid">
+                <div class="gps-item"><div class="gps-value mono" id="gps-speed">--</div><div class="gps-label">Vitesse (km/h)</div></div>
+                <div class="gps-item"><div class="gps-value mono" id="gps-heading">--</div><div class="gps-label">Cap</div></div>
+            </div>
+            <div class="metric-grid" id="gps-metrics" style="margin-top:.75rem"></div>
+            <div class="timestamp">Dernière mise à jour : <span id="gps-time" class="mono">--</span></div>
+        </section>
 
-def get_coords(digits):
-    """Lit lat/lon, valide les bornes et arrondit (sert aussi de clé de cache)."""
-    lat = request.args.get("lat", type=float)
-    lon = request.args.get("lon", type=float)
-    if lat is None or lon is None or not (-90 <= lat <= 90 and -180 <= lon <= 180):
-        return None
-    return round(lat, digits), round(lon, digits)
+        <!-- Carburants -->
+        <section class="card" id="fuel-card">
+            <header class="card-header">
+                <h2 class="card-title">⛽ Carburants les moins chers</h2>
+                <span class="status-badge status-pending" id="fuel-status">Chargement</span>
+            </header>
+            <div class="rows" id="fuel-list"></div>
+            <div class="hint" id="fuel-hint">France uniquement, autour de la position active.</div>
+        </section>
 
+        <!-- Électricité en France -->
+        <section class="card" id="power-card">
+            <header class="card-header">
+                <h2 class="card-title">⚡ Électricité en France</h2>
+                <span class="status-badge status-pending" id="power-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="power-metrics"></div>
+            <div class="hint" id="power-hint"></div>
+        </section>
 
-def bad_coords():
-    return jsonify({"error": "Latitude et longitude valides requises"}), 400
+        <!-- Séismes -->
+        <section class="card" id="quake-card">
+            <header class="card-header">
+                <h2 class="card-title">🌋 Séismes (24 h, magnitude 4,5 et plus)</h2>
+                <span class="status-badge status-pending" id="quake-status">Chargement</span>
+            </header>
+            <div class="rows" id="quake-list"></div>
+        </section>
 
+        <!-- ISS -->
+        <section class="card" id="iss-card">
+            <header class="card-header">
+                <h2 class="card-title">🛰️ Station spatiale internationale</h2>
+                <span class="status-badge status-pending" id="iss-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="iss-metrics"></div>
+        </section>
 
-def haversine_km(lat1, lon1, lat2, lon2):
-    p = math.pi / 180
-    a = (math.sin((lat2 - lat1) * p / 2) ** 2
-         + math.cos(lat1 * p) * math.cos(lat2 * p) * math.sin((lon2 - lon1) * p / 2) ** 2)
-    return 12742 * math.asin(math.sqrt(a))
+        <!-- Météo spatiale -->
+        <section class="card" id="space-card">
+            <header class="card-header">
+                <h2 class="card-title">🌌 Météo spatiale</h2>
+                <span class="status-badge status-pending" id="space-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="space-metrics"></div>
+            <div class="hint" id="space-hint"></div>
+        </section>
 
+        <!-- Marchés -->
+        <section class="card" id="markets-card">
+            <header class="card-header">
+                <h2 class="card-title">💶 Taux de change et cryptomonnaies</h2>
+                <span class="status-badge status-pending" id="markets-status">Chargement</span>
+            </header>
+            <div class="metric-grid" id="markets-metrics"></div>
+            <div class="hint">Valeur de 1 € (taux de la BCE) et cours en euros. À titre informatif.</div>
+        </section>
 
-# ---------- pages ----------
-@app.route("/")
-def index():
-    return render_template("index.html")
+        <!-- Vacances scolaires -->
+        <section class="card" id="school-card">
+            <header class="card-header"><h2 class="card-title">🎓 Vacances scolaires</h2></header>
+            <div class="rows" id="school-list"><div class="empty">Chargement…</div></div>
+            <div class="hint">Zones A, B et C (métropole). Départ après la classe, reprise le matin de la date de fin.</div>
+        </section>
 
+        <!-- Jours importants -->
+        <section class="card" id="obs-card">
+            <header class="card-header"><h2 class="card-title">🎉 Dates à connaître</h2></header>
+            <div class="rows" id="obs-list"></div>
+            <div class="hint">Fêtes et événements non fériés (France, Royaume-Uni, États-Unis) : changement d'heure, Black Friday…</div>
+        </section>
 
-# ---------- météo / air ----------
-@app.route("/api/weather")
-def weather():
-    c = get_coords(2)  # ~1 km
-    if not c:
-        return bad_coords()
-    return proxy(OPEN_METEO, {
-        "latitude": c[0], "longitude": c[1],
-        "current": "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,"
-                   "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,dew_point_2m",
-        "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility,pressure_msl",
-        "past_hours": 3,
-        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
-                 "precipitation_probability_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,daylight_duration,sunshine_duration",
-        "minutely_15": "precipitation",
-        "forecast_minutely_15": 8,
-        "wind_speed_unit": "kmh",
-        "timezone": "auto",
-        "forecast_days": 7,
-    }, ttl=600)
+        <!-- Heures du monde -->
+        <section class="card" id="clocks-card">
+            <header class="card-header"><h2 class="card-title">🕰️ Heures dans le monde</h2></header>
+            <div class="search">
+                <input id="clock-search" type="search" placeholder="Ajouter une ville…" autocomplete="off" aria-label="Ajouter une ville aux horloges">
+                <div class="results hidden" id="clock-results"></div>
+            </div>
+            <div class="rows" id="clocks" style="margin-top:.75rem"></div>
+        </section>
 
+        <!-- Calculs rapides -->
+        <section class="card" id="calc-card">
+            <header class="card-header"><h2 class="card-title">🧮 Calculs rapides</h2></header>
+            <div class="sub" style="margin-top:0">TVA</div>
+            <div class="tool-row">
+                <label class="field"><span>Montant (€)</span><input class="input" id="vat-amount" type="number" min="0" step="0.01" value="100"></label>
+                <label class="field"><span>Taux</span>
+                    <select class="input" id="vat-rate"><option value="20">20 %</option><option value="10">10 %</option><option value="5.5">5,5 %</option><option value="2.1">2,1 %</option></select></label>
+                <label class="field"><span>Le montant est</span>
+                    <select class="input" id="vat-mode"><option value="ht">Hors taxes (HT)</option><option value="ttc">Toutes taxes comprises (TTC)</option></select></label>
+            </div>
+            <div class="metric-grid" id="vat-result"></div>
+            <div class="sub">Remise ou soldes</div>
+            <div class="tool-row">
+                <label class="field"><span>Prix initial (€)</span><input class="input" id="disc-price" type="number" min="0" step="0.01" value="80"></label>
+                <label class="field"><span>Remise (%)</span><input class="input" id="disc-pct" type="number" min="0" max="100" step="1" value="30"></label>
+            </div>
+            <div class="metric-grid" id="disc-result"></div>
+        </section>
 
-@app.route("/api/air")
-def air():
-    c = get_coords(2)
-    if not c:
-        return bad_coords()
-    return proxy(AIR_QUALITY, {
-        "latitude": c[0], "longitude": c[1],
-        "current": "european_aqi,pm10,pm2_5,nitrogen_dioxide,ozone,sulphur_dioxide",
-        "hourly": "alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,olive_pollen,ragweed_pollen",
-        "forecast_days": 1,
-        "timezone": "auto",
-    }, ttl=1800)
+        <!-- Convertisseur d'unités -->
+        <section class="card" id="units-card">
+            <header class="card-header"><h2 class="card-title">📐 Convertisseur d'unités</h2></header>
+            <label class="field"><span>Grandeur</span><select class="input" id="u-cat"></select></label>
+            <div class="tool-row" style="margin-top:.5rem">
+                <label class="field"><span>Valeur</span><input class="input" id="u-val" type="number" step="any" value="1"></label>
+                <label class="field"><span>De</span><select class="input" id="u-from"></select></label>
+                <label class="field"><span>Vers</span><select class="input" id="u-to"></select></label>
+            </div>
+            <div class="big-line mono" id="u-result" aria-live="polite"></div>
+        </section>
 
+        <!-- Convertisseur de devises -->
+        <section class="card" id="fx-card">
+            <header class="card-header"><h2 class="card-title">💱 Convertisseur de devises</h2></header>
+            <div class="tool-row">
+                <label class="field"><span>Montant</span><input class="input" id="fx-amount" type="number" min="0" step="any" value="100"></label>
+                <label class="field"><span>De</span><select class="input" id="fx-from"></select></label>
+                <button class="btn" id="fx-swap" type="button" aria-label="Inverser les devises" style="align-self:flex-end">⇄</button>
+                <label class="field"><span>Vers</span><select class="input" id="fx-to"></select></label>
+            </div>
+            <div class="big-line mono" id="fx-result" aria-live="polite">Chargement des taux…</div>
+            <div class="hint" id="fx-hint"></div>
+        </section>
 
-# ---------- géocodage ----------
-@app.route("/api/geocode")
-def geocode():
-    q = request.args.get("q", "").strip()
-    if len(q) < 2:
-        return jsonify({"error": "Requête trop courte"}), 400
-    return proxy(GEOCODING, {"name": q, "count": 5, "language": "fr", "format": "json"}, ttl=3600)
+        <!-- Chronomètre & minuteur -->
+        <section class="card" id="timer-card">
+            <header class="card-header"><h2 class="card-title">⏱️ Chronomètre et minuteur</h2></header>
+            <div class="sub" style="margin-top:0">Chronomètre</div>
+            <div class="big-time mono" id="sw-display">00:00.0</div>
+            <div class="tool-row">
+                <button class="btn" id="sw-toggle" type="button">Démarrer</button>
+                <button class="btn" id="sw-lap" type="button" disabled>Tour</button>
+                <button class="btn" id="sw-reset" type="button">Réinitialiser</button>
+            </div>
+            <div class="hint" id="sw-laps"></div>
+            <div class="sub">Minuteur</div>
+            <div class="big-time mono" id="tm-display">05:00</div>
+            <div class="tool-row">
+                <label class="field"><span>Minutes</span><input class="input" id="tm-min" type="number" min="0" max="999" value="5"></label>
+                <label class="field"><span>Secondes</span><input class="input" id="tm-sec" type="number" min="0" max="59" value="0"></label>
+            </div>
+            <div class="tool-row">
+                <button class="btn" id="tm-toggle" type="button">Démarrer</button>
+                <button class="btn" id="tm-reset" type="button">Réinitialiser</button>
+            </div>
+        </section>
 
+        <!-- Compte à rebours -->
+        <section class="card" id="cd-card">
+            <header class="card-header"><h2 class="card-title">⏳ Compte à rebours</h2></header>
+            <div class="tool-row">
+                <label class="field"><span>Événement</span><input class="input" id="cd-label" type="text" maxlength="40" placeholder="Ex. : départ en vacances"></label>
+                <label class="field"><span>Date et heure</span><input class="input" id="cd-date" type="datetime-local"></label>
+            </div>
+            <div class="big-time mono" id="cd-display">--</div>
+            <div class="hint" id="cd-sub">Choisissez une date pour lancer le compte à rebours.</div>
+        </section>
 
-@app.route("/api/reverse-geocode")
-def reverse_geocode():
-    c = get_coords(3)
-    if not c:
-        return bad_coords()
-    return proxy(NOMINATIM, {"lat": c[0], "lon": c[1], "format": "jsonv2",
-                             "accept-language": "fr", "zoom": 14}, ttl=86400)
+        <!-- Générateur de mot de passe -->
+        <section class="card" id="pwd-card">
+            <header class="card-header"><h2 class="card-title">🔐 Générateur de mot de passe</h2></header>
+            <div class="tool-row">
+                <input class="input grow mono" id="pwd-out" type="text" readonly aria-label="Mot de passe généré">
+                <button class="btn" id="pwd-copy" type="button">Copier</button>
+            </div>
+            <label class="field" style="margin-top:.75rem"><span>Longueur : <b id="pwd-len-val">16</b> caractères</span><input id="pwd-len" type="range" min="8" max="64" value="16"></label>
+            <div class="chips" style="margin-top:.5rem">
+                <label class="chip-check"><input type="checkbox" id="pwd-lower" checked> minuscules</label>
+                <label class="chip-check"><input type="checkbox" id="pwd-upper" checked> MAJUSCULES</label>
+                <label class="chip-check"><input type="checkbox" id="pwd-digits" checked> chiffres</label>
+                <label class="chip-check"><input type="checkbox" id="pwd-symbols" checked> symboles</label>
+            </div>
+            <div class="metric-grid" id="pwd-strength"></div>
+            <button class="btn" id="pwd-gen" type="button" style="margin-top:.75rem">Générer un autre mot de passe</button>
+            <div class="hint">Généré dans votre navigateur : il n'est ni envoyé ni enregistré.</div>
+        </section>
 
+        <!-- Bloc-notes -->
+        <section class="card" id="notes-card">
+            <header class="card-header"><h2 class="card-title">📝 Bloc-notes</h2></header>
+            <textarea class="input" id="notes" rows="8" placeholder="Écrivez ici…" aria-label="Bloc-notes"></textarea>
+            <div class="tool-row" style="margin-top:.5rem">
+                <button class="btn" id="notes-clear" type="button">Effacer</button>
+                <span class="hint" id="notes-info"></span>
+            </div>
+            <div class="hint">Enregistré automatiquement, uniquement sur cet appareil (dans le navigateur).</div>
+        </section>
 
-# ---------- carburants (France) ----------
-@app.route("/api/fuel")
-def fuel():
-    c = get_coords(3)
-    if not c:
-        return bad_coords()
-    lat, lon = c
-    radius = max(1, min(request.args.get("radius", 8, type=int), 30))
-    params = {"where": f"within_distance(geom, GEOM'POINT({lon} {lat})', {radius}km)", "limit": 100}
-    try:
-        data = cached_get(FUEL_API, params, ttl=600)
-    except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        <!-- Numéros d'urgence -->
+        <section class="card" id="sos-card">
+            <header class="card-header"><h2 class="card-title">🚑 Numéros d'urgence</h2></header>
+            <div class="rows">
+                <div class="row"><div>Urgence européen<small>Police, pompiers, secours</small></div><a class="mono" href="tel:112">112</a></div>
+                <div class="row"><div>SAMU<small>Urgence médicale</small></div><a class="mono" href="tel:15">15</a></div>
+                <div class="row"><div>Police / Gendarmerie</div><a class="mono" href="tel:17">17</a></div>
+                <div class="row"><div>Sapeurs-pompiers</div><a class="mono" href="tel:18">18</a></div>
+                <div class="row"><div>Urgence par SMS<small>Personnes sourdes ou malentendantes</small></div><a class="mono" href="tel:114">114</a></div>
+                <div class="row"><div>Hébergement d'urgence<small>Personnes sans abri</small></div><a class="mono" href="tel:115">115</a></div>
+                <div class="row"><div>Enfance en danger</div><a class="mono" href="tel:119">119</a></div>
+                <div class="row"><div>Prévention du suicide<small>24 h/24</small></div><a class="mono" href="tel:3114">3114</a></div>
+                <div class="row"><div>Violences faites aux femmes</div><a class="mono" href="tel:3919">3919</a></div>
+            </div>
+        </section>
 
-    results = data.get("results", [])
-    stations = []
-    for rec in results:
-        g = rec.get("geom") or {}
-        prix = {f: rec[f"{f}_prix"] for f in FUELS if rec.get(f"{f}_prix") is not None}
-        if "lat" not in g or not prix:
-            continue
-        stations.append({
-            "ville": rec.get("ville"), "adresse": rec.get("adresse"), "prix": prix,
-            "dist_km": round(haversine_km(lat, lon, g["lat"], g["lon"]), 1),
-        })
+        <!-- Performances de l'appareil -->
+        <section class="card" id="perf-card">
+            <header class="card-header">
+                <h2 class="card-title">⚙️ Performances de votre appareil</h2>
+                <span class="status-badge status-ok" id="perf-status">En direct</span>
+            </header>
+            <div class="metric-grid" id="perf-metrics"></div>
+            <button class="btn" id="bench-btn" type="button" style="margin-top:.75rem">Tester la puissance du processeur</button>
+            <div class="hint">Un navigateur ne peut pas lire l'usage réel du processeur ou de la mémoire : ces mesures (images par seconde, réactivité, test de calcul) sont faites sur votre appareil.</div>
+        </section>
 
-    best = {}
-    for f in FUELS:
-        cands = [s for s in stations if f in s["prix"]]
-        if cands:
-            s = min(cands, key=lambda s: s["prix"][f])
-            best[f] = {"prix": s["prix"][f], "ville": s["ville"], "adresse": s["adresse"], "dist_km": s["dist_km"]}
-    return jsonify({"radius_km": radius, "count": len(stations), "truncated": len(results) >= 100, "best": best})
+        <!-- Appareil & réseau -->
+        <section class="card" id="device-card">
+            <header class="card-header"><h2 class="card-title">📱 Appareil et réseau</h2></header>
+            <div class="metric-grid" id="device-metrics"></div>
+        </section>
 
+        <!-- Test de débit -->
+        <section class="card" id="speedtest-card">
+            <header class="card-header">
+                <h2 class="card-title">📶 Test de débit</h2>
+                <span class="status-badge status-pending" id="speedtest-status">Prêt</span>
+            </header>
+            <button class="speedtest-btn" id="speedtest-btn" type="button">
+                <span id="speedtest-btn-text">Lancer le test</span>
+                <div class="loader hidden" id="speedtest-loader"></div>
+            </button>
+            <div class="speedtest-result hidden" id="speedtest-result">
+                <div class="speedtest-item"><div class="speedtest-value mono" id="dl-speed">--</div><div class="speedtest-label">Réception (Mb/s)</div></div>
+                <div class="speedtest-item"><div class="speedtest-value mono" id="ul-speed">--</div><div class="speedtest-label">Envoi (Mb/s)</div></div>
+                <div class="speedtest-item"><div class="speedtest-value mono" id="ping-speed">--</div><div class="speedtest-label">Latence (ms)</div></div>
+            </div>
+            <div class="timestamp">Dernier test : <span id="speedtest-time" class="mono">--</span></div>
+        </section>
 
-# ---------- séismes / ISS ----------
-@app.route("/api/quakes")
-def quakes():
-    try:
-        data = cached_get(USGS_QUAKES, {}, ttl=300)
-    except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
-    out = []
-    for f in data.get("features", [])[:10]:
-        p, (lon, lat, depth) = f["properties"], f["geometry"]["coordinates"]
-        out.append({"mag": p.get("mag"), "place": p.get("place"), "time": p.get("time"),
-                    "lat": lat, "lon": lon, "depth": depth, "url": p.get("url")})
-    return jsonify({"quakes": out})
+        <!-- Batterie (si dispo) -->
+        <section class="card hidden" id="battery-card">
+            <header class="card-header"><h2 class="card-title">🔋 Batterie</h2></header>
+            <div class="metric-grid" id="battery-metrics"></div>
+        </section>
 
-
-@app.route("/api/iss")
-def iss():
-    return proxy(ISS_API, {}, ttl=5)
-
-
-# ---------- radar / météo spatiale / marchés / calendrier ----------
-@app.route("/api/radar")
-def radar():
-    return proxy(RAINVIEWER, {}, ttl=300)
-
-
-@app.route("/api/space")
-def space():
-    try:
-        rows = cached_get(SWPC_KP, {}, ttl=600)
-        if rows and isinstance(rows[0], list):  # ancien format : 1re ligne = en-têtes
-            rows = [dict(zip(rows[0], r)) for r in rows[1:]]
-        kp = []
-        for r in rows[-8:]:
-            v = r.get("Kp", r.get("kp_index"))
-            kp.append({"time": r.get("time_tag"), "kp": float(v)})
-        return jsonify({"kp": kp})
-    except (requests.RequestException, ValueError, TypeError, AttributeError) as e:
-        return jsonify({"error": str(e)}), 502
-
-
-@app.route("/api/markets")
-def markets():
-    out = {"fx": None, "crypto": None}
-    try:
-        out["fx"] = cached_get(FX_API, {"base": "EUR", "symbols": "USD,GBP,CHF,JPY"}, ttl=3600)["rates"]
-    except (requests.RequestException, ValueError, KeyError):
-        pass
-    try:
-        out["crypto"] = cached_get(COINGECKO, {"ids": "bitcoin,ethereum", "vs_currencies": "eur",
-                                               "include_24hr_change": "true"}, ttl=300)
-    except (requests.RequestException, ValueError):
-        pass
-    if out["fx"] is None and out["crypto"] is None:
-        return jsonify({"error": "Sources indisponibles"}), 502
-    return jsonify(out)
-
-
-@app.route("/api/fx")
-def fx():
-    return proxy(FX_API, {"base": "EUR"}, ttl=3600)
-
-
-@app.route("/api/holidays")
-def holidays():
-    today = date.today()
-    found = {}
-    for year in (today.year, today.year + 1):
-        try:
-            found.update(cached_get(f"{HOLIDAYS}/{year}.json", {}, ttl=86400))
-        except (requests.RequestException, ValueError):
-            pass
-    if not found:
-        return jsonify({"error": "Jours fériés indisponibles"}), 502
-    upcoming = sorted((d, n) for d, n in found.items() if d >= today.isoformat())[:4]
-    return jsonify({"holidays": [{"date": d, "name": n} for d, n in upcoming]})
-
-
-# ---------- mer (Open-Meteo Marine) ----------
-@app.route("/api/marine")
-def marine():
-    c = get_coords(2)
-    if not c:
-        return bad_coords()
-    return proxy(MARINE, {"latitude": c[0], "longitude": c[1], "timezone": "auto",
-                          "current": "wave_height,wave_direction,wave_period,sea_surface_temperature"}, ttl=1800)
-
-
-# ---------- électricité en France (RTE éCO2mix, temps réel) ----------
-@app.route("/api/power")
-def power():
-    try:
-        data = cached_get(ECO2MIX, {"where": "taux_co2 is not null", "order_by": "date_heure desc", "limit": 1}, ttl=300)
-        rec = (data.get("results") or [None])[0]
-        if not rec:
-            raise ValueError("aucune donnée")
-    except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
-    sources = ["nucleaire", "eolien", "solaire", "hydraulique", "gaz", "charbon", "fioul", "bioenergies"]
-    mix = {k: max(0, rec.get(k) or 0) for k in sources}
-    return jsonify({"time": rec.get("date_heure"), "consommation": rec.get("consommation"),
-                    "co2": rec.get("taux_co2"), "mix": mix, "total": sum(mix.values())})
-
-
-# ---------- vacances scolaires (zones A/B/C) ----------
-SCHOOL_ZONES = {"A": "Lyon", "B": "Lille", "C": "Paris"}  # une académie représentative par zone
-
-
-def paris_date(value):
-    """Date locale (Paris) d'un champ date/datetime de l'API (souvent minuit Paris exprimé en UTC)."""
-    if not value:
-        return None
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return (dt.astimezone(PARIS) if dt.tzinfo else dt).date()
-
-
-@app.route("/api/school-holidays")
-def school_holidays():
-    today = datetime.now(PARIS).date()
-    merged = {}
-    try:
-        for zone, academy in SCHOOL_ZONES.items():
-            data = cached_get(SCHOOL, {"where": f'end_date>="{today.isoformat()}"', "order_by": "end_date",
-                                       "limit": 30, "refine": f"location:{academy}"}, ttl=21600)
-            seen = set()
-            for rec in data.get("results", []):
-                if rec.get("population") == "Enseignants":
-                    continue
-                start, end = paris_date(rec.get("start_date")), paris_date(rec.get("end_date"))
-                if not start or not end or end < today or (rec["description"], start) in seen:
-                    continue
-                seen.add((rec["description"], start))
-                if len(seen) > 3:  # 3 prochaines périodes par zone suffisent
-                    break
-                key = (rec["description"], start.isoformat(), end.isoformat())
-                merged.setdefault(key, []).append(zone)
-    except (requests.RequestException, ValueError, KeyError) as e:
-        return jsonify({"error": str(e)}), 502
-    rows = [{"name": n, "start": s_, "end": e_, "zones": z} for (n, s_, e_), z in sorted(merged.items(), key=lambda kv: kv[0][1])]
-    return jsonify({"holidays": rows[:6]})
-
-
-# ---------- jours fériés dans le monde (Nager.Date) ----------
-@app.route("/api/world-holidays")
-def world_holidays():
-    codes = [c for c in request.args.get("countries", "").upper().split(",") if re.fullmatch(r"[A-Z]{2}", c)][:20]
-    if not codes:
-        return jsonify({"error": "Aucun pays"}), 400
-
-    def one(cc):
-        try:
-            data = cached_get(f"{NAGER}/NextPublicHolidays/{cc}", {}, ttl=86400)
-        except (requests.RequestException, ValueError):
-            return cc, None
-        pub = [h for h in data if "Public" in (h.get("types") or ["Public"])]
-        return cc, [{"date": h["date"], "name": h.get("name"), "local": h.get("localName")} for h in pub[:3]]
-
-    with ThreadPoolExecutor(max_workers=6) as ex:
-        return jsonify(dict(ex.map(one, codes)))
-
-
-def main():
-    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5003)))
-
-
-if __name__ == "__main__":
-    main()
+        <!-- Orientation / mouvement (mobile) -->
+        <section class="card hidden" id="orientation-card">
+            <header class="card-header">
+                <h2 class="card-title">🔄 Orientation et mouvement</h2>
+                <span class="status-badge status-ok" id="orient-status">Actif</span>
+            </header>
+            <div class="metric-grid" id="orient-metrics"></div>
+        </section>
+    </main>
+</body>
+</html>
