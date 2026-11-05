@@ -3,11 +3,12 @@
 The server is a cached proxy to public APIs that need no key.
 """
 import math
-import os
 import re
 import time
+import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import requests
@@ -35,6 +36,11 @@ MARINE = "https://marine-api.open-meteo.com/v1/marine"
 ECO2MIX = "https://odre.opendatasoft.com/api/explore/v2.1/catalog/datasets/eco2mix-national-tr/records"
 SCHOOL = "https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records"
 NAGER = "https://date.nager.at/api/v3"
+GEO_COMMUNES = "https://geo.api.gouv.fr/communes"
+NEWS_RSS = "https://www.francetvinfo.fr/titres.rss"
+WIKI_FEED = "https://api.wikimedia.org/feed/v1/wikipedia/fr"
+ARCHIVE = "https://archive-api.open-meteo.com/v1/archive"
+LAUNCHES = "https://ll.thespacedevs.com/2.2.0/launch/upcoming/"
 PARIS = ZoneInfo("Europe/Paris")
 
 FUELS = ["gazole", "e10", "sp95", "sp98", "e85", "gplc"]
@@ -43,15 +49,15 @@ _cache = {}
 
 
 # ---------- utilitaires ----------
-def cached_get(url, params, ttl):
-    """GET JSON avec cache mémoire (TTL en secondes)."""
-    key = (url, tuple(sorted(params.items())))
+def cached_get(url, params, ttl, raw=False):
+    """GET avec cache mémoire (TTL en secondes) : JSON, ou octets bruts si raw=True (RSS)."""
+    key = (url, tuple(sorted(params.items())), raw)
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < ttl:
         return hit[1]
     resp = session.get(url, params=params, timeout=10)
     resp.raise_for_status()
-    data = resp.json()
+    data = resp.content if raw else resp.json()
     if len(_cache) > 500:
         _cache.clear()
     _cache[key] = (time.time(), data)
@@ -101,7 +107,7 @@ def weather():
         "latitude": c[0], "longitude": c[1],
         "current": "temperature_2m,relative_humidity_2m,apparent_temperature,is_day,precipitation,"
                    "weather_code,cloud_cover,wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,dew_point_2m",
-        "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility,pressure_msl",
+        "hourly": "temperature_2m,precipitation_probability,weather_code,uv_index,visibility,pressure_msl,shortwave_radiation",
         "past_hours": 3,
         "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
                  "precipitation_probability_max,wind_gusts_10m_max,uv_index_max,sunrise,sunset,daylight_duration,sunshine_duration",
@@ -238,11 +244,6 @@ def markets():
     return jsonify(out)
 
 
-@app.route("/api/fx")
-def fx():
-    return proxy(FX_API, {"base": "EUR"}, ttl=3600)
-
-
 @app.route("/api/holidays")
 def holidays():
     today = date.today()
@@ -256,6 +257,142 @@ def holidays():
         return jsonify({"error": "Jours fériés indisponibles"}), 502
     upcoming = sorted((d, n) for d, n in found.items() if d >= today.isoformat())[:4]
     return jsonify({"holidays": [{"date": d, "name": n} for d, n in upcoming]})
+
+
+# ---------- ma commune (geo.api.gouv.fr) ----------
+@app.route("/api/commune")
+def commune():
+    c = get_coords(3)
+    if not c:
+        return bad_coords()
+    try:
+        data = cached_get(GEO_COMMUNES, {"lat": c[0], "lon": c[1], "format": "json",
+                                         "fields": "nom,code,codesPostaux,population,surface,departement,region"}, ttl=86400)
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"error": str(e)}), 502
+    if not data:
+        return jsonify({"error": "Aucune commune française à cet endroit"}), 404
+    return jsonify(data[0])
+
+
+# ---------- actualités (flux RSS franceinfo) ----------
+@app.route("/api/news")
+def news():
+    try:
+        root = ET.fromstring(cached_get(NEWS_RSS, {}, ttl=600, raw=True))
+    except (requests.RequestException, ET.ParseError) as e:
+        return jsonify({"error": str(e)}), 502
+    items = []
+    for it in root.iter("item"):
+        title, link, pub = (it.findtext(k) for k in ("title", "link", "pubDate"))
+        if not title or not link or not link.strip().startswith("https://"):
+            continue
+        try:
+            ts = int(parsedate_to_datetime(pub).timestamp() * 1000) if pub else None
+        except (TypeError, ValueError):
+            ts = None
+        items.append({"title": title.strip(), "link": link.strip(), "time": ts})
+        if len(items) == 8:
+            break
+    return jsonify({"items": items})
+
+
+# ---------- Wikipédia : ce jour-là et articles les plus lus ----------
+@app.route("/api/history")
+def history():
+    today = datetime.now(PARIS).date()
+    try:
+        data = cached_get(f"{WIKI_FEED}/onthisday/selected/{today:%m}/{today:%d}", {}, ttl=43200)
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"error": str(e)}), 502
+    events = sorted(data.get("selected") or data.get("events") or [], key=lambda e: e.get("year", 0), reverse=True)
+    picked = [events[i * len(events) // 5] for i in range(5)] if len(events) > 5 else events  # répartis dans le temps
+    out = []
+    for e in picked:
+        page = (e.get("pages") or [{}])[0]
+        url = ((page.get("content_urls") or {}).get("desktop") or {}).get("page")
+        out.append({"year": e.get("year"), "text": e.get("text"), "url": url})
+    return jsonify({"events": out})
+
+
+@app.route("/api/wiki-trends")
+def wiki_trends():
+    today = datetime.now(PARIS).date()
+    arts, day = [], today
+    for offset in (0, 1):  # le flux du jour peut ne pas être publié tout de suite
+        day = today - timedelta(days=offset)
+        try:
+            data = cached_get(f"{WIKI_FEED}/featured/{day:%Y}/{day:%m}/{day:%d}", {}, ttl=3600)
+        except (requests.RequestException, ValueError):
+            continue
+        arts = (data.get("mostread") or {}).get("articles") or []
+        if arts:
+            break
+    if not arts:
+        return jsonify({"error": "Flux Wikipédia indisponible"}), 502
+    skip = ("Spécial:", "Wikipédia:", "Portail:", "Catégorie:", "Aide:", "Fichier:", "Accueil")
+    out = []
+    for a in arts:
+        title = a.get("normalizedtitle") or (a.get("title") or "").replace("_", " ")
+        if not title or title.startswith(skip):
+            continue
+        url = ((a.get("content_urls") or {}).get("desktop") or {}).get("page")
+        out.append({"title": title, "views": a.get("views"), "description": a.get("description"), "url": url})
+        if len(out) == 6:
+            break
+    # le flux d'un jour donne les consultations de la veille
+    return jsonify({"date": (day - timedelta(days=1)).isoformat(), "articles": out})
+
+
+# ---------- normales de saison (moyenne des 10 dernières années) ----------
+@app.route("/api/climate")
+def climate():
+    c = get_coords(1)  # ~11 km : suffisant pour une normale, et ça mutualise le cache
+    if not c:
+        return bad_coords()
+    today = date.today()
+    try:
+        data = cached_get(ARCHIVE, {
+            "latitude": c[0], "longitude": c[1], "timezone": "auto",
+            "start_date": f"{today.year - 10}-01-01", "end_date": f"{today.year - 1}-12-31",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum",
+        }, ttl=86400)
+        d = data["daily"]
+    except (requests.RequestException, ValueError, KeyError) as e:
+        return jsonify({"error": str(e)}), 502
+    wanted = set()  # fenêtre de ±3 jours autour de la date du jour, pour chacune des 10 années
+    for yr in range(today.year - 10, today.year):
+        try:
+            center = date(yr, today.month, today.day)
+        except ValueError:  # 29 février
+            center = date(yr, 2, 28)
+        wanted |= {(center + timedelta(days=k)).isoformat() for k in range(-3, 4)}
+    rows = [r for r in zip(d["time"], d["temperature_2m_max"], d["temperature_2m_min"], d["precipitation_sum"]) if r[0] in wanted]
+
+    def avg(i):
+        vals = [r[i] for r in rows if r[i] is not None]
+        return round(sum(vals) / len(vals), 1) if vals else None
+
+    return jsonify({"years": 10, "tmax": avg(1), "tmin": avg(2), "rain": avg(3)})
+
+
+# ---------- prochains lancements de fusées (Launch Library 2) ----------
+@app.route("/api/launches")
+def launches():
+    try:
+        data = cached_get(LAUNCHES, {"limit": 5}, ttl=3600)  # l'API limite à ~15 requêtes/heure
+    except (requests.RequestException, ValueError) as e:
+        return jsonify({"error": str(e)}), 502
+    out = []
+    for item in data.get("results", []):
+        pad = item.get("pad") or {}
+        out.append({
+            "name": item.get("name"), "net": item.get("net"),
+            "status": (item.get("status") or {}).get("abbrev"),
+            "provider": (item.get("launch_service_provider") or {}).get("name"),
+            "place": (pad.get("location") or {}).get("name"),
+        })
+    return jsonify({"launches": out})
 
 
 # ---------- mer (Open-Meteo Marine) ----------
@@ -342,7 +479,7 @@ def world_holidays():
 
 
 def main():
-    app.run(host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 5003)))
+    app.run(host="127.0.0.1", port=5003)
 
 
 if __name__ == "__main__":

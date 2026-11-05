@@ -1,9 +1,11 @@
 <!DOCTYPE html>
 <html lang="fr">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Tableau de bord en temps réel : météo, radar de pluie, qualité de l'air, carburants, électricité, jours fériés, outils pratiques et plus.">
+    <meta name="description"
+        content="Tableau de bord en temps réel : météo, radar de pluie, qualité de l'air, carburants, électricité, jours fériés, outils pratiques et plus.">
     <title>Live Info - Tableau de bord en temps réel</title>
     <script>
         /* applique le thème avant l'affichage pour éviter un flash */
@@ -14,17 +16,21 @@
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link
+        href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js" defer></script>
     <script src="{{ url_for('static', filename='js/app.js') }}" defer></script>
 </head>
+
 <body>
     <header class="topbar">
         <h1>Live Info</h1>
         <div class="search">
-            <input id="search" type="search" placeholder="Rechercher une ville…" autocomplete="off" aria-label="Rechercher une ville">
+            <input id="search" type="search" placeholder="Rechercher une ville…" autocomplete="off"
+                aria-label="Rechercher une ville">
             <div class="results hidden" id="search-results"></div>
         </div>
         <button class="btn active" id="btn-gps" type="button">📍 Ma position</button>
@@ -35,8 +41,12 @@
     <main class="grid" id="dashboard">
         <!-- Alertes & conseils -->
         <section class="card wide" id="alerts-card">
-            <header class="card-header"><h2 class="card-title">🔔 Alertes et conseils</h2></header>
-            <div class="alerts" id="alerts"><div class="empty">En attente des données…</div></div>
+            <header class="card-header">
+                <h2 class="card-title">🔔 Alertes et conseils</h2>
+            </header>
+            <div class="alerts" id="alerts">
+                <div class="empty">En attente des données…</div>
+            </div>
         </section>
 
         <!-- Météo -->
@@ -58,7 +68,9 @@
 
         <!-- Pluie imminente -->
         <section class="card" id="nowcast-card">
-            <header class="card-header"><h2 class="card-title">🌧️ Pluie dans les 2 heures</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🌧️ Pluie dans les 2 heures</h2>
+            </header>
             <div class="big-line" id="nowcast-summary">--</div>
             <div class="nowcast" id="nowcast-bars" aria-hidden="true"></div>
             <div class="nowcast-labels"><span>maintenant</span><span>+1 h</span><span>+2 h</span></div>
@@ -72,34 +84,44 @@
                 <h2 class="card-title">🗺️ Carte en direct</h2>
                 <span class="status-badge status-pending" id="map-status">Chargement</span>
             </header>
-            <div id="map" class="map" role="application" aria-label="Carte : radar de pluie, station spatiale et séismes"></div>
+            <div id="map" class="map" role="application"
+                aria-label="Carte : radar de pluie, station spatiale et séismes"></div>
             <div class="map-bar">
                 <button class="btn active" id="radar-toggle" type="button">🌧️ Radar</button>
                 <button class="btn" id="radar-play" type="button">▶ Animer (2 h)</button>
                 <span class="hint" id="radar-time">--</span>
             </div>
-            <div class="hint">🟢 Votre position · 🛰️ ISS · 🔴 Séismes · Radar : <a href="https://www.rainviewer.com" target="_blank" rel="noopener">RainViewer</a></div>
+            <div class="hint">🟢 Votre position · 🛰️ ISS · 🔴 Séismes · Radar : <a href="https://www.rainviewer.com"
+                    target="_blank" rel="noopener">RainViewer</a></div>
         </section>
 
         <!-- Calendrier -->
         <section class="card tall" id="calendar-card">
-            <header class="card-header"><h2 class="card-title">📅 Aujourd'hui</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">📅 Aujourd'hui</h2>
+            </header>
             <div class="date-big" id="date-big">--</div>
             <div class="metric-grid" id="date-metrics"></div>
             <div class="sub">Prochains jours fériés en France</div>
-            <div class="rows" id="holiday-list"><div class="empty">Chargement…</div></div>
+            <div class="rows" id="holiday-list">
+                <div class="empty">Chargement…</div>
+            </div>
         </section>
 
         <!-- Prochaines heures -->
         <section class="card wide" id="hourly-card">
-            <header class="card-header"><h2 class="card-title">🕒 Prochaines 24 heures</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🕒 Prochaines 24 heures</h2>
+            </header>
             <div class="chart" id="hourly-chart"></div>
             <div class="hint">Courbe : température (°C). Barres : probabilité de pluie (%).</div>
         </section>
 
         <!-- 7 jours -->
         <section class="card wide" id="daily-card">
-            <header class="card-header"><h2 class="card-title">📆 Prévisions sur 7 jours</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">📆 Prévisions sur 7 jours</h2>
+            </header>
             <div class="days" id="daily"></div>
         </section>
 
@@ -111,7 +133,8 @@
             </header>
             <div class="chips" id="country-chips" role="group" aria-label="Pays affichés"></div>
             <div class="world-grid" id="world-list"></div>
-            <div class="hint">Jours fériés nationaux officiels (source : Nager.Date). Cliquez sur un pays pour l'afficher ou le masquer.</div>
+            <div class="hint">Jours fériés nationaux officiels (source : Nager.Date). Cliquez sur un pays pour
+                l'afficher ou le masquer.</div>
         </section>
 
         <!-- Air & pollens -->
@@ -127,7 +150,9 @@
 
         <!-- Soleil & Lune -->
         <section class="card" id="sun-card">
-            <header class="card-header"><h2 class="card-title">🌅 Soleil et Lune</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🌅 Soleil et Lune</h2>
+            </header>
             <div class="metric-grid" id="sun-metrics"></div>
         </section>
 
@@ -148,8 +173,14 @@
                 <span class="status-badge status-pending" id="gps-status">En attente</span>
             </header>
             <div class="gps-grid">
-                <div class="gps-item"><div class="gps-value mono" id="gps-speed">--</div><div class="gps-label">Vitesse (km/h)</div></div>
-                <div class="gps-item"><div class="gps-value mono" id="gps-heading">--</div><div class="gps-label">Cap</div></div>
+                <div class="gps-item">
+                    <div class="gps-value mono" id="gps-speed">--</div>
+                    <div class="gps-label">Vitesse (km/h)</div>
+                </div>
+                <div class="gps-item">
+                    <div class="gps-value mono" id="gps-heading">--</div>
+                    <div class="gps-label">Cap</div>
+                </div>
             </div>
             <div class="metric-grid" id="gps-metrics" style="margin-top:.75rem"></div>
             <div class="timestamp">Dernière mise à jour : <span id="gps-time" class="mono">--</span></div>
@@ -215,76 +246,107 @@
 
         <!-- Vacances scolaires -->
         <section class="card" id="school-card">
-            <header class="card-header"><h2 class="card-title">🎓 Vacances scolaires</h2></header>
-            <div class="rows" id="school-list"><div class="empty">Chargement…</div></div>
-            <div class="hint">Zones A, B et C (métropole). Départ après la classe, reprise le matin de la date de fin.</div>
+            <header class="card-header">
+                <h2 class="card-title">🎓 Vacances scolaires</h2>
+            </header>
+            <div class="rows" id="school-list">
+                <div class="empty">Chargement…</div>
+            </div>
+            <div class="hint">Zones A, B et C (métropole). Départ après la classe, reprise le matin de la date de fin.
+            </div>
         </section>
 
         <!-- Jours importants -->
         <section class="card" id="obs-card">
-            <header class="card-header"><h2 class="card-title">🎉 Dates à connaître</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🎉 Dates à connaître</h2>
+            </header>
             <div class="rows" id="obs-list"></div>
-            <div class="hint">Fêtes et événements non fériés (France, Royaume-Uni, États-Unis) : changement d'heure, Black Friday…</div>
+            <div class="hint">Fêtes et événements non fériés (France, Royaume-Uni, États-Unis) : changement d'heure,
+                Black Friday…</div>
         </section>
 
         <!-- Heures du monde -->
         <section class="card" id="clocks-card">
-            <header class="card-header"><h2 class="card-title">🕰️ Heures dans le monde</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🕰️ Heures dans le monde</h2>
+            </header>
             <div class="search">
-                <input id="clock-search" type="search" placeholder="Ajouter une ville…" autocomplete="off" aria-label="Ajouter une ville aux horloges">
+                <input id="clock-search" type="search" placeholder="Ajouter une ville…" autocomplete="off"
+                    aria-label="Ajouter une ville aux horloges">
                 <div class="results hidden" id="clock-results"></div>
             </div>
             <div class="rows" id="clocks" style="margin-top:.75rem"></div>
         </section>
 
-        <!-- Calculs rapides -->
-        <section class="card" id="calc-card">
-            <header class="card-header"><h2 class="card-title">🧮 Calculs rapides</h2></header>
-            <div class="sub" style="margin-top:0">TVA</div>
-            <div class="tool-row">
-                <label class="field"><span>Montant (€)</span><input class="input" id="vat-amount" type="number" min="0" step="0.01" value="100"></label>
-                <label class="field"><span>Taux</span>
-                    <select class="input" id="vat-rate"><option value="20">20 %</option><option value="10">10 %</option><option value="5.5">5,5 %</option><option value="2.1">2,1 %</option></select></label>
-                <label class="field"><span>Le montant est</span>
-                    <select class="input" id="vat-mode"><option value="ht">Hors taxes (HT)</option><option value="ttc">Toutes taxes comprises (TTC)</option></select></label>
-            </div>
-            <div class="metric-grid" id="vat-result"></div>
-            <div class="sub">Remise ou soldes</div>
-            <div class="tool-row">
-                <label class="field"><span>Prix initial (€)</span><input class="input" id="disc-price" type="number" min="0" step="0.01" value="80"></label>
-                <label class="field"><span>Remise (%)</span><input class="input" id="disc-pct" type="number" min="0" max="100" step="1" value="30"></label>
-            </div>
-            <div class="metric-grid" id="disc-result"></div>
+        <!-- Ma commune (France) -->
+        <section class="card hidden" id="commune-card">
+            <header class="card-header">
+                <h2 class="card-title">🏘️ Ma commune</h2>
+            </header>
+            <div class="metric-grid" id="commune-metrics"></div>
+            <div class="hint">Données officielles (geo.api.gouv.fr, INSEE). Communes françaises uniquement.</div>
         </section>
 
-        <!-- Convertisseur d'unités -->
-        <section class="card" id="units-card">
-            <header class="card-header"><h2 class="card-title">📐 Convertisseur d'unités</h2></header>
-            <label class="field"><span>Grandeur</span><select class="input" id="u-cat"></select></label>
-            <div class="tool-row" style="margin-top:.5rem">
-                <label class="field"><span>Valeur</span><input class="input" id="u-val" type="number" step="any" value="1"></label>
-                <label class="field"><span>De</span><select class="input" id="u-from"></select></label>
-                <label class="field"><span>Vers</span><select class="input" id="u-to"></select></label>
-            </div>
-            <div class="big-line mono" id="u-result" aria-live="polite"></div>
+        <!-- Normales de saison -->
+        <section class="card hidden" id="climate-card">
+            <header class="card-header">
+                <h2 class="card-title">📊 Normales de saison</h2>
+            </header>
+            <div class="metric-grid" id="climate-metrics"></div>
+            <div class="hint" id="climate-hint"></div>
         </section>
 
-        <!-- Convertisseur de devises -->
-        <section class="card" id="fx-card">
-            <header class="card-header"><h2 class="card-title">💱 Convertisseur de devises</h2></header>
-            <div class="tool-row">
-                <label class="field"><span>Montant</span><input class="input" id="fx-amount" type="number" min="0" step="any" value="100"></label>
-                <label class="field"><span>De</span><select class="input" id="fx-from"></select></label>
-                <button class="btn" id="fx-swap" type="button" aria-label="Inverser les devises" style="align-self:flex-end">⇄</button>
-                <label class="field"><span>Vers</span><select class="input" id="fx-to"></select></label>
+        <!-- À la une -->
+        <section class="card" id="news-card">
+            <header class="card-header">
+                <h2 class="card-title">📰 À la une</h2>
+                <span class="status-badge status-pending" id="news-status">Chargement</span>
+            </header>
+            <div class="rows" id="news-list">
+                <div class="empty">Chargement…</div>
             </div>
-            <div class="big-line mono" id="fx-result" aria-live="polite">Chargement des taux…</div>
-            <div class="hint" id="fx-hint"></div>
+            <div class="hint">Titres du flux RSS de franceinfo. Cliquez pour lire l'article sur le site.</div>
+        </section>
+
+        <!-- Ce jour-là -->
+        <section class="card" id="history-card">
+            <header class="card-header">
+                <h2 class="card-title">📖 Ce jour-là dans l'histoire</h2>
+            </header>
+            <div class="rows" id="history-list">
+                <div class="empty">Chargement…</div>
+            </div>
+            <div class="hint">Source : Wikipédia en français.</div>
+        </section>
+
+        <!-- Tendances Wikipédia -->
+        <section class="card" id="trends-card">
+            <header class="card-header">
+                <h2 class="card-title">🔥 Les plus lus sur Wikipédia</h2>
+            </header>
+            <div class="rows" id="trends-list">
+                <div class="empty">Chargement…</div>
+            </div>
+            <div class="hint" id="trends-hint"></div>
+        </section>
+
+        <!-- Lancements de fusées -->
+        <section class="card" id="launch-card">
+            <header class="card-header">
+                <h2 class="card-title">🚀 Prochains lancements de fusées</h2>
+            </header>
+            <div class="rows" id="launch-list">
+                <div class="empty">Chargement…</div>
+            </div>
+            <div class="hint">Dates indicatives, susceptibles de changer (source : The Space Devs).</div>
         </section>
 
         <!-- Chronomètre & minuteur -->
         <section class="card" id="timer-card">
-            <header class="card-header"><h2 class="card-title">⏱️ Chronomètre et minuteur</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">⏱️ Chronomètre et minuteur</h2>
+            </header>
             <div class="sub" style="margin-top:0">Chronomètre</div>
             <div class="big-time mono" id="sw-display">00:00.0</div>
             <div class="tool-row">
@@ -296,8 +358,10 @@
             <div class="sub">Minuteur</div>
             <div class="big-time mono" id="tm-display">05:00</div>
             <div class="tool-row">
-                <label class="field"><span>Minutes</span><input class="input" id="tm-min" type="number" min="0" max="999" value="5"></label>
-                <label class="field"><span>Secondes</span><input class="input" id="tm-sec" type="number" min="0" max="59" value="0"></label>
+                <label class="field"><span>Minutes</span><input class="input" id="tm-min" type="number" min="0"
+                        max="999" value="5"></label>
+                <label class="field"><span>Secondes</span><input class="input" id="tm-sec" type="number" min="0"
+                        max="59" value="0"></label>
             </div>
             <div class="tool-row">
                 <button class="btn" id="tm-toggle" type="button">Démarrer</button>
@@ -305,60 +369,42 @@
             </div>
         </section>
 
-        <!-- Compte à rebours -->
-        <section class="card" id="cd-card">
-            <header class="card-header"><h2 class="card-title">⏳ Compte à rebours</h2></header>
-            <div class="tool-row">
-                <label class="field"><span>Événement</span><input class="input" id="cd-label" type="text" maxlength="40" placeholder="Ex. : départ en vacances"></label>
-                <label class="field"><span>Date et heure</span><input class="input" id="cd-date" type="datetime-local"></label>
-            </div>
-            <div class="big-time mono" id="cd-display">--</div>
-            <div class="hint" id="cd-sub">Choisissez une date pour lancer le compte à rebours.</div>
-        </section>
-
-        <!-- Générateur de mot de passe -->
-        <section class="card" id="pwd-card">
-            <header class="card-header"><h2 class="card-title">🔐 Générateur de mot de passe</h2></header>
-            <div class="tool-row">
-                <input class="input grow mono" id="pwd-out" type="text" readonly aria-label="Mot de passe généré">
-                <button class="btn" id="pwd-copy" type="button">Copier</button>
-            </div>
-            <label class="field" style="margin-top:.75rem"><span>Longueur : <b id="pwd-len-val">16</b> caractères</span><input id="pwd-len" type="range" min="8" max="64" value="16"></label>
-            <div class="chips" style="margin-top:.5rem">
-                <label class="chip-check"><input type="checkbox" id="pwd-lower" checked> minuscules</label>
-                <label class="chip-check"><input type="checkbox" id="pwd-upper" checked> MAJUSCULES</label>
-                <label class="chip-check"><input type="checkbox" id="pwd-digits" checked> chiffres</label>
-                <label class="chip-check"><input type="checkbox" id="pwd-symbols" checked> symboles</label>
-            </div>
-            <div class="metric-grid" id="pwd-strength"></div>
-            <button class="btn" id="pwd-gen" type="button" style="margin-top:.75rem">Générer un autre mot de passe</button>
-            <div class="hint">Généré dans votre navigateur : il n'est ni envoyé ni enregistré.</div>
-        </section>
-
-        <!-- Bloc-notes -->
-        <section class="card" id="notes-card">
-            <header class="card-header"><h2 class="card-title">📝 Bloc-notes</h2></header>
-            <textarea class="input" id="notes" rows="8" placeholder="Écrivez ici…" aria-label="Bloc-notes"></textarea>
-            <div class="tool-row" style="margin-top:.5rem">
-                <button class="btn" id="notes-clear" type="button">Effacer</button>
-                <span class="hint" id="notes-info"></span>
-            </div>
-            <div class="hint">Enregistré automatiquement, uniquement sur cet appareil (dans le navigateur).</div>
-        </section>
-
         <!-- Numéros d'urgence -->
         <section class="card" id="sos-card">
-            <header class="card-header"><h2 class="card-title">🚑 Numéros d'urgence</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🚑 Numéros d'urgence</h2>
+            </header>
             <div class="rows">
-                <div class="row"><div>Urgence européen<small>Police, pompiers, secours</small></div><a class="mono" href="tel:112">112</a></div>
-                <div class="row"><div>SAMU<small>Urgence médicale</small></div><a class="mono" href="tel:15">15</a></div>
-                <div class="row"><div>Police / Gendarmerie</div><a class="mono" href="tel:17">17</a></div>
-                <div class="row"><div>Sapeurs-pompiers</div><a class="mono" href="tel:18">18</a></div>
-                <div class="row"><div>Urgence par SMS<small>Personnes sourdes ou malentendantes</small></div><a class="mono" href="tel:114">114</a></div>
-                <div class="row"><div>Hébergement d'urgence<small>Personnes sans abri</small></div><a class="mono" href="tel:115">115</a></div>
-                <div class="row"><div>Enfance en danger</div><a class="mono" href="tel:119">119</a></div>
-                <div class="row"><div>Prévention du suicide<small>24 h/24</small></div><a class="mono" href="tel:3114">3114</a></div>
-                <div class="row"><div>Violences faites aux femmes</div><a class="mono" href="tel:3919">3919</a></div>
+                <div class="row">
+                    <div>Urgence européen<small>Police, pompiers, secours</small></div><a class="mono"
+                        href="tel:112">112</a>
+                </div>
+                <div class="row">
+                    <div>SAMU<small>Urgence médicale</small></div><a class="mono" href="tel:15">15</a>
+                </div>
+                <div class="row">
+                    <div>Police / Gendarmerie</div><a class="mono" href="tel:17">17</a>
+                </div>
+                <div class="row">
+                    <div>Sapeurs-pompiers</div><a class="mono" href="tel:18">18</a>
+                </div>
+                <div class="row">
+                    <div>Urgence par SMS<small>Personnes sourdes ou malentendantes</small></div><a class="mono"
+                        href="tel:114">114</a>
+                </div>
+                <div class="row">
+                    <div>Hébergement d'urgence<small>Personnes sans abri</small></div><a class="mono"
+                        href="tel:115">115</a>
+                </div>
+                <div class="row">
+                    <div>Enfance en danger</div><a class="mono" href="tel:119">119</a>
+                </div>
+                <div class="row">
+                    <div>Prévention du suicide<small>24 h/24</small></div><a class="mono" href="tel:3114">3114</a>
+                </div>
+                <div class="row">
+                    <div>Violences faites aux femmes</div><a class="mono" href="tel:3919">3919</a>
+                </div>
             </div>
         </section>
 
@@ -369,13 +415,17 @@
                 <span class="status-badge status-ok" id="perf-status">En direct</span>
             </header>
             <div class="metric-grid" id="perf-metrics"></div>
-            <button class="btn" id="bench-btn" type="button" style="margin-top:.75rem">Tester la puissance du processeur</button>
-            <div class="hint">Un navigateur ne peut pas lire l'usage réel du processeur ou de la mémoire : ces mesures (images par seconde, réactivité, test de calcul) sont faites sur votre appareil.</div>
+            <button class="btn" id="bench-btn" type="button" style="margin-top:.75rem">Tester la puissance du
+                processeur</button>
+            <div class="hint">Un navigateur ne peut pas lire l'usage réel du processeur ou de la mémoire : ces mesures
+                (images par seconde, réactivité, test de calcul) sont faites sur votre appareil.</div>
         </section>
 
         <!-- Appareil & réseau -->
         <section class="card" id="device-card">
-            <header class="card-header"><h2 class="card-title">📱 Appareil et réseau</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">📱 Appareil et réseau</h2>
+            </header>
             <div class="metric-grid" id="device-metrics"></div>
         </section>
 
@@ -390,16 +440,27 @@
                 <div class="loader hidden" id="speedtest-loader"></div>
             </button>
             <div class="speedtest-result hidden" id="speedtest-result">
-                <div class="speedtest-item"><div class="speedtest-value mono" id="dl-speed">--</div><div class="speedtest-label">Réception (Mb/s)</div></div>
-                <div class="speedtest-item"><div class="speedtest-value mono" id="ul-speed">--</div><div class="speedtest-label">Envoi (Mb/s)</div></div>
-                <div class="speedtest-item"><div class="speedtest-value mono" id="ping-speed">--</div><div class="speedtest-label">Latence (ms)</div></div>
+                <div class="speedtest-item">
+                    <div class="speedtest-value mono" id="dl-speed">--</div>
+                    <div class="speedtest-label">Réception (Mb/s)</div>
+                </div>
+                <div class="speedtest-item">
+                    <div class="speedtest-value mono" id="ul-speed">--</div>
+                    <div class="speedtest-label">Envoi (Mb/s)</div>
+                </div>
+                <div class="speedtest-item">
+                    <div class="speedtest-value mono" id="ping-speed">--</div>
+                    <div class="speedtest-label">Latence (ms)</div>
+                </div>
             </div>
             <div class="timestamp">Dernier test : <span id="speedtest-time" class="mono">--</span></div>
         </section>
 
         <!-- Batterie (si dispo) -->
         <section class="card hidden" id="battery-card">
-            <header class="card-header"><h2 class="card-title">🔋 Batterie</h2></header>
+            <header class="card-header">
+                <h2 class="card-title">🔋 Batterie</h2>
+            </header>
             <div class="metric-grid" id="battery-metrics"></div>
         </section>
 
@@ -413,4 +474,5 @@
         </section>
     </main>
 </body>
+
 </html>

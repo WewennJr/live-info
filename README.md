@@ -13,13 +13,15 @@ Flask backend (cached proxy to public APIs) + vanilla HTML/CSS/JS frontend.
 - **France focus**: electricity mix & CO₂ intensity (RTE), school holidays (zones A/B/C), public holidays, fuel prices nearby
 - **Holidays worldwide** for 18 countries (UK, US, Germany, Spain, Italy, Canada, Japan, China, India, Brazil…) and key dates (clock changes, Black Friday, Halloween…)
 - **Sea & waves** near coasts (hidden inland)
+- **Local info (France)**: your commune (population, area, density) and seasonal normals compared with today's forecast
+- **News & curiosities**: franceinfo headlines, "on this day in history", most-read Wikipedia articles, upcoming rocket launches
 - **GPS trip stats**: speed, heading, distance, max/average speed
 - **Space weather** (Kp index), **exchange rates & crypto**, **world clocks**, **calendar & French public holidays**
 - **Device & network info**, **speedtest**, battery and orientation (on supported devices)
 - **Device performance**: live FPS, UI latency, quick CPU benchmark, browser storage (all measured on your own device)
 
 - **World clocks**: add any city (time zone detected automatically)
-- **Handy tools**: VAT & discount calculator, unit and currency converters, stopwatch & timer, countdown, password generator, notepad, emergency numbers
+- **Handy tools**: stopwatch & timer, emergency numbers
 - **Light / dark theme** (follows your system by default), French interface
 
 You can also search for a city manually instead of using GPS.
@@ -57,8 +59,6 @@ python app.py
 
 The app will be available at `http://localhost:5003`
 
-To change the host or port, set the `HOST` / `PORT` environment variables (e.g. `HOST=0.0.0.0 PORT=8080`).
-
 ## Good to Know
 
 - **GPS, battery and orientation need HTTPS** (or `localhost`). Opening the app from a phone via `http://192.168.x.x:5003` won't work; use a reverse proxy with HTTPS.
@@ -92,6 +92,10 @@ static/
 [RTE éCO2mix](https://odre.opendatasoft.com/explore/dataset/eco2mix-national-tr/) (electricity) ·
 [data.education.gouv.fr](https://data.education.gouv.fr/explore/dataset/fr-en-calendrier-scolaire/) (school calendar) ·
 [Nager.Date](https://date.nager.at/) (worldwide holidays) ·
+[geo.api.gouv.fr](https://geo.api.gouv.fr/) (communes) ·
+[franceinfo](https://www.francetvinfo.fr/) (RSS headlines) ·
+[Wikimedia](https://api.wikimedia.org/) (history, trends) ·
+[The Space Devs](https://thespacedevs.com/) (launches) ·
 [Cloudflare Speed Test](https://speed.cloudflare.com/) ·
 [Leaflet](https://leafletjs.com/) with [OpenStreetMap France](https://www.openstreetmap.fr/) tiles (© OpenStreetMap contributors).
 

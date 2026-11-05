@@ -81,7 +81,7 @@ const state = {
     last: { t: 0, lat: null, lon: null },
     gpsPos: null, acc: null,
     weather: null, air: null, pollen: {}, quakes: [], rainMsg: null,
-    kp: null, holidays: [], pTrend: null,
+    kp: null, holidays: [], pTrend: null, climate: null,
 };
 const MANUAL_KEY = 'live-info:manual';
 
@@ -91,7 +91,7 @@ function setLocation(lat, lon, name) {
     state.locSeq++;
     state.last = { t: Date.now(), lat, lon, acc: state.mode === 'gps' ? state.acc : null };
     if (name) setText('location-text', `📍 ${name}`); else loadPlace();
-    loadWeather(); loadAir(); loadFuel(); loadMarine();
+    loadWeather(); loadAir(); loadFuel(); loadMarine(); loadCommune(); loadClimate();
     renderQuakes();
     updateMapLocation();
 }
@@ -205,6 +205,7 @@ function renderWeather(d) {
         ['Humidité', `${c.relative_humidity_2m}%`],
         ['Vent', `${round(c.wind_speed_10m)} km/h ${cardinal(c.wind_direction_10m)}`],
         ['Rafales', `${round(c.wind_gusts_10m)} km/h`],
+        ['Échelle de Beaufort', beaufort(c.wind_speed_10m)],
         ['Pression', `${round(c.pressure_msl)} hPa`],
         ['Précipitations', `${c.precipitation} mm`],
         ['Nuages', `${c.cloud_cover}%`],
@@ -226,6 +227,7 @@ function renderWeather(d) {
     renderHourly(d, hi);
     renderDaily(d);
     renderSun();
+    renderClimate();
 }
 
 function renderNowcast(d) {
@@ -294,7 +296,13 @@ function renderSun() {
         items.push(['Lever', hm(dl.sunrise[0])], ['Coucher', hm(dl.sunset[0])],
             ['Durée du jour', dur(dl.daylight_duration[0])], ['Soleil prévu', dl.sunshine_duration?.[0] == null ? '--' : dur(dl.sunshine_duration[0])], ['UV max', dl.uv_index_max[0]?.toFixed(1) ?? '--']);
     }
-    items.push(['Lune', `${m.icon} ${m.name}`], ['Illumination', `${m.illum}%`, m.illum, 'progress-ram']);
+    const w = state.weather;
+    if (w) {
+        const rad = w.hourly.shortwave_radiation?.[hourIndex(w)];
+        items.push(['Rayonnement solaire', rad == null ? '--' : `${round(rad)} W/m²`]);
+    }
+    items.push(['Lune', `${m.icon} ${m.name}`], ['Illumination', `${m.illum}%`, m.illum, 'progress-ram'],
+        ['Prochaine pleine lune', `≈ ${nextPhaseDate(m.age, 14.765)}`], ['Prochaine nouvelle lune', `≈ ${nextPhaseDate(m.age, 0)}`]);
     metrics('sun-metrics', items);
 }
 
@@ -1237,90 +1245,8 @@ const currencyName = (code) => {
     try { const n = currencyNames?.of(code) || code; return n.charAt(0).toUpperCase() + n.slice(1); } catch { return code; }
 };
 
-// ============ OUTILS PRATIQUES ============
-const fmtNum = (v, d = 6) => (Number.isFinite(v) ? v.toLocaleString('fr-FR', { maximumFractionDigits: d }) : '--');
-const fmtEur = (v) => v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
-const numVal = (sel) => parseFloat($(sel).value);
+// ============ CHRONOMÈTRE ET MINUTEUR ============
 const pad2 = (n) => String(n).padStart(2, '0');
-
-// --- TVA et remises
-function renderCalc() {
-    const amount = numVal('#vat-amount'), rate = numVal('#vat-rate') / 100, isTtc = $('#vat-mode').value === 'ttc';
-    if (Number.isFinite(amount)) {
-        const ht = isTtc ? amount / (1 + rate) : amount, ttc = isTtc ? amount : amount * (1 + rate);
-        metrics('vat-result', [['Hors taxes (HT)', fmtEur(ht)], ['TVA', fmtEur(ttc - ht)], ['TTC', fmtEur(ttc)]]);
-    } else metrics('vat-result', []);
-    const price = numVal('#disc-price'), pct = numVal('#disc-pct');
-    if (Number.isFinite(price) && Number.isFinite(pct)) {
-        const saved = (price * pct) / 100;
-        metrics('disc-result', [['Prix après remise', fmtEur(price - saved)], ['Économie', fmtEur(saved)]]);
-    } else metrics('disc-result', []);
-}
-
-// --- Convertisseur d'unités
-const UNITS = {
-    'Longueur': { 'mètre (m)': 1, 'kilomètre (km)': 1000, 'centimètre (cm)': 0.01, 'millimètre (mm)': 0.001, 'mile': 1609.344, 'yard': 0.9144, 'pied (ft)': 0.3048, 'pouce (in)': 0.0254, 'mille marin': 1852 },
-    'Masse': { 'kilogramme (kg)': 1, 'gramme (g)': 0.001, 'tonne (t)': 1000, 'livre (lb)': 0.45359237, 'once (oz)': 0.028349523125 },
-    'Vitesse': { 'km/h': 1 / 3.6, 'm/s': 1, 'mph (miles/h)': 0.44704, 'nœud': 1852 / 3600 },
-    'Volume': { 'litre (L)': 1, 'millilitre (mL)': 0.001, 'mètre cube (m³)': 1000, 'gallon US': 3.785411784, 'gallon impérial': 4.54609, 'once liquide US': 0.0295735295625 },
-    'Surface': { 'mètre carré (m²)': 1, 'hectare (ha)': 10000, 'kilomètre carré (km²)': 1e6, 'acre': 4046.8564224, 'pied carré (ft²)': 0.09290304 },
-    'Température': { '°C': 1, '°F': 1, 'K': 1 },
-    'Durée': { 'seconde': 1, 'minute': 60, 'heure': 3600, 'jour': 86400, 'semaine': 604800 },
-};
-
-function convertUnit(cat, v, from, to) {
-    if (cat === 'Température') {
-        const c = from === '°C' ? v : from === '°F' ? ((v - 32) * 5) / 9 : v - 273.15;
-        return to === '°C' ? c : to === '°F' ? (c * 9) / 5 + 32 : c + 273.15;
-    }
-    return (v * UNITS[cat][from]) / UNITS[cat][to];
-}
-
-function initUnits() {
-    const cat = $('#u-cat'), from = $('#u-from'), to = $('#u-to');
-    cat.innerHTML = Object.keys(UNITS).map((c) => `<option>${esc(c)}</option>`).join('');
-    const calc = () => {
-        const v = parseFloat($('#u-val').value);
-        $('#u-result').textContent = Number.isFinite(v)
-            ? `${fmtNum(v)} ${from.value} = ${fmtNum(convertUnit(cat.value, v, from.value, to.value))} ${to.value}` : '--';
-    };
-    const fill = () => {
-        const names = Object.keys(UNITS[cat.value]);
-        from.innerHTML = to.innerHTML = names.map((n) => `<option>${esc(n)}</option>`).join('');
-        to.selectedIndex = Math.min(1, names.length - 1);
-        calc();
-    };
-    cat.addEventListener('change', fill);
-    [from, to, $('#u-val')].forEach((el) => el.addEventListener('input', calc));
-    fill();
-}
-
-// --- Convertisseur de devises (taux BCE)
-async function initFx() {
-    const from = $('#fx-from'), to = $('#fx-to'), out = $('#fx-result');
-    let rates = null, date = null;
-    const calc = () => {
-        const a = parseFloat($('#fx-amount').value);
-        if (!rates || !Number.isFinite(a)) { out.textContent = '--'; return; }
-        out.textContent = `${fmtNum(a, 2)} ${from.value} = ${fmtNum((a / rates[from.value]) * rates[to.value], 2)} ${to.value}`;
-        const day = new Date(date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric' });
-        setText('fx-hint', `Taux du ${day} (Banque centrale européenne). 1 ${from.value} = ${fmtNum(rates[to.value] / rates[from.value], 4)} ${to.value}.`);
-    };
-    try {
-        const d = await api('fx');
-        rates = { EUR: 1, ...d.rates }; date = d.date;
-        from.innerHTML = to.innerHTML = Object.keys(rates).sort()
-            .map((c) => `<option value="${c}">${c} - ${esc(currencyName(c))}</option>`).join('');
-        from.value = 'EUR'; to.value = 'USD';
-    } catch (e) {
-        console.error('Devises:', e);
-        out.textContent = 'Taux indisponibles pour le moment.';
-        return;
-    }
-    [from, to, $('#fx-amount')].forEach((el) => el.addEventListener('input', calc));
-    $('#fx-swap').addEventListener('click', () => { [from.value, to.value] = [to.value, from.value]; calc(); });
-    calc();
-}
 
 // --- Chronomètre et minuteur
 function beep() {
@@ -1398,99 +1324,138 @@ function initTimers() {
     resetTm();
 }
 
-// --- Compte à rebours
-const CD_KEY = 'live-info:countdown';
-function initCountdown() {
-    let saved = {};
-    try { saved = JSON.parse(localStorage.getItem(CD_KEY)) || {}; } catch { /* ignore */ }
-    const label = $('#cd-label'), date = $('#cd-date');
-    label.value = saved.label || ''; date.value = saved.date || '';
-    const paint = () => {
-        const target = date.value ? new Date(date.value) : null;
-        if (!target || Number.isNaN(+target)) {
-            setText('cd-display', '--'); setText('cd-sub', 'Choisissez une date pour lancer le compte à rebours.'); return;
-        }
-        const ms = target - Date.now(), name = label.value.trim() || "l'événement";
-        if (ms <= 0) { setText('cd-display', 'Terminé'); setText('cd-sub', `La date de ${name} est passée.`); return; }
-        const d = Math.floor(ms / 864e5), h = Math.floor((ms % 864e5) / 36e5), m = Math.floor((ms % 36e5) / 6e4);
-        setText('cd-display', `${d} j ${pad2(h)} h ${pad2(m)} min`);
-        setText('cd-sub', `Avant ${name} : ${target.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}.`);
-    };
-    const save = () => {
-        try { localStorage.setItem(CD_KEY, JSON.stringify({ label: label.value, date: date.value })); } catch { /* ignore */ }
-        paint();
-    };
-    label.addEventListener('input', save);
-    date.addEventListener('input', save);
-    paint(); every(30e3, paint);
+// ============ MA COMMUNE (geo.api.gouv.fr) ============
+async function loadCommune() {
+    if (state.lat === null) return;
+    const seq = state.locSeq, card = $('#commune-card');
+    try {
+        const c = await api('commune', { lat: state.lat, lon: state.lon });
+        if (seq !== state.locSeq) return;
+        const km2 = c.surface ? c.surface / 100 : null; // la surface est donnée en hectares
+        metrics('commune-metrics', [
+            ['Commune', c.nom], ['Code INSEE', c.code],
+            ['Code postal', (c.codesPostaux || []).slice(0, 3).join(', ') || '--'],
+            ['Département', c.departement ? `${c.departement.nom} (${c.departement.code})` : '--'],
+            ['Région', c.region?.nom || '--'],
+            ['Population', c.population == null ? '--' : `${c.population.toLocaleString('fr-FR')} hab.`],
+            ['Superficie', km2 == null ? '--' : `${km2.toLocaleString('fr-FR', { maximumFractionDigits: 1 })} km²`],
+            ['Densité', km2 && c.population ? `${round(c.population / km2).toLocaleString('fr-FR')} hab./km²` : '--'],
+        ]);
+        show(card);
+    } catch (e) {
+        if (seq === state.locSeq) hide(card); // hors de France : pas de commune
+    }
 }
 
-// --- Générateur de mot de passe
-const PWD_SETS = { lower: 'abcdefghijklmnopqrstuvwxyz', upper: 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', digits: '0123456789', symbols: '!@#$%^&*()-_=+[]{};:,.?/' };
-
-function randomInt(max) { // tirage uniforme, sans biais de modulo
-    const limit = Math.floor(0x100000000 / max) * max, buf = new Uint32Array(1);
-    do { crypto.getRandomValues(buf); } while (buf[0] >= limit);
-    return buf[0] % max;
+// ============ NORMALES DE SAISON ============
+async function loadClimate() {
+    if (state.lat === null) return;
+    const seq = state.locSeq;
+    try {
+        const d = await api('climate', { lat: state.lat, lon: state.lon });
+        if (seq !== state.locSeq) return;
+        state.climate = d;
+    } catch (e) {
+        console.error('Normales:', e);
+        state.climate = null;
+    }
+    renderClimate();
 }
 
-function generatePassword() {
-    const sets = Object.keys(PWD_SETS).filter((k) => $(`#pwd-${k}`).checked).map((k) => PWD_SETS[k]);
-    const out = $('#pwd-out');
-    if (!sets.length) { out.value = ''; metrics('pwd-strength', [['Force', 'Choisissez un type de caractères']]); return; }
-    const len = +$('#pwd-len').value, pool = sets.join('');
-    let pwd;
-    do { pwd = Array.from({ length: len }, () => pool[randomInt(pool.length)]).join(''); }
-    while (sets.some((set) => ![...pwd].some((c) => set.includes(c)))); // au moins un caractère de chaque type choisi
-    out.value = pwd;
-    const bits = len * Math.log2(pool.length);
-    const label = bits < 40 ? 'Faible' : bits < 60 ? 'Moyen' : bits < 80 ? 'Fort' : 'Très fort';
-    metrics('pwd-strength', [['Force', label, Math.min(100, bits), bits < 60 ? 'progress-gpu' : 'progress-cpu'], ['Entropie', `${round(bits)} bits`]]);
+function renderClimate() {
+    const c = state.climate, w = state.weather, card = $('#climate-card');
+    if (!c || c.tmax == null || c.tmin == null) return hide(card);
+    const sgn = (v) => `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}°C`;
+    const items = [['Maximale normale', `${c.tmax.toFixed(1)}°C`], ['Minimale normale', `${c.tmin.toFixed(1)}°C`]];
+    let verdict = '';
+    if (w) {
+        const dmax = w.daily.temperature_2m_max[0] - c.tmax, dmin = w.daily.temperature_2m_min[0] - c.tmin, avg = (dmax + dmin) / 2;
+        items.push(['Écart du jour (maximale)', sgn(dmax)], ['Écart du jour (minimale)', sgn(dmin)]);
+        verdict = avg >= 3 ? 'Nettement plus chaud que la normale.' : avg >= 1 ? 'Un peu plus chaud que la normale.'
+            : avg <= -3 ? 'Nettement plus frais que la normale.' : avg <= -1 ? 'Un peu plus frais que la normale.' : 'Conforme à la normale de saison.';
+    }
+    if (c.rain != null) items.push(['Pluie normale', `${c.rain.toFixed(1)} mm/jour`]);
+    if (w) items.push(['Pluie prévue', `${w.daily.precipitation_sum[0]} mm`]);
+    metrics('climate-metrics', items);
+    setText('climate-hint', `${verdict} Normale = moyenne des ${c.years} dernières années à cette période (±3 jours).`.trim());
+    show(card);
 }
 
-function initPassword() {
-    $('#pwd-len').addEventListener('input', () => { setText('pwd-len-val', $('#pwd-len').value); generatePassword(); });
-    ['lower', 'upper', 'digits', 'symbols'].forEach((k) => $(`#pwd-${k}`).addEventListener('change', generatePassword));
-    $('#pwd-gen').addEventListener('click', generatePassword);
-    $('#pwd-copy').addEventListener('click', async () => {
-        const out = $('#pwd-out');
-        if (!out.value) return;
-        try { await navigator.clipboard.writeText(out.value); } catch { out.select(); document.execCommand('copy'); }
-        setText('pwd-copy', 'Copié ✓');
-        setTimeout(() => setText('pwd-copy', 'Copier'), 1500);
-    });
-    generatePassword();
+// ============ À LA UNE (franceinfo) ============
+const safeLink = (url, label) => (/^https:\/\//.test(url || '')
+    ? `<a class="link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>` : esc(label));
+
+async function loadNews() {
+    const box = $('#news-list');
+    try {
+        const items = (await api('news')).items;
+        box.innerHTML = items.length
+            ? items.map((n) => `<div class="row"><div>${safeLink(n.link, n.title)}${n.time ? `<small>${ago(n.time)}</small>` : ''}</div></div>`).join('')
+            : '<div class="empty">Aucune actualité disponible.</div>';
+        setStatus('news', 'ok', 'En direct');
+    } catch (e) {
+        console.error('Actualités:', e);
+        box.innerHTML = '<div class="empty">Actualités indisponibles pour le moment.</div>';
+        setStatus('news', 'error', 'Erreur');
+    }
 }
 
-// --- Bloc-notes
-const NOTES_KEY = 'live-info:notes';
-function initNotes() {
-    const ta = $('#notes');
-    try { ta.value = localStorage.getItem(NOTES_KEY) || ''; } catch { /* ignore */ }
-    const info = () => setText('notes-info', `${ta.value.length} caractère${ta.value.length > 1 ? 's' : ''}`);
-    ta.addEventListener('input', () => {
-        try { localStorage.setItem(NOTES_KEY, ta.value); } catch { /* ignore */ }
-        info();
-    });
-    $('#notes-clear').addEventListener('click', () => {
-        if (!ta.value || confirm('Effacer le bloc-notes ?')) {
-            ta.value = '';
-            try { localStorage.removeItem(NOTES_KEY); } catch { /* ignore */ }
-            info();
-        }
-    });
-    info();
+// ============ WIKIPÉDIA : CE JOUR-LÀ ET TENDANCES ============
+async function loadHistory() {
+    const box = $('#history-list');
+    try {
+        const events = (await api('history')).events;
+        box.innerHTML = events.length
+            ? events.map((e) => `<div class="row"><div>${safeLink(e.url, e.text)}</div><span class="mono">${esc(e.year)}</span></div>`).join('')
+            : '<div class="empty">Rien à afficher pour aujourd\'hui.</div>';
+    } catch (e) {
+        console.error('Histoire:', e);
+        box.innerHTML = '<div class="empty">Indisponible pour le moment.</div>';
+    }
 }
 
-function initTools() {
-    ['#vat-amount', '#vat-rate', '#vat-mode', '#disc-price', '#disc-pct'].forEach((sel) => $(sel).addEventListener('input', renderCalc));
-    renderCalc();
-    initUnits();
-    initFx();
-    initTimers();
-    initCountdown();
-    initPassword();
-    initNotes();
+async function loadTrends() {
+    const box = $('#trends-list');
+    try {
+        const d = await api('wiki-trends');
+        box.innerHTML = d.articles.map((a) => `<div class="row"><div>${safeLink(a.url, a.title)}${a.description ? `<small>${esc(a.description)}</small>` : ''}</div>` +
+            `<span class="mono">${a.views == null ? '' : `${a.views.toLocaleString('fr-FR')} vues`}</span></div>`).join('');
+        const day = new Date(`${d.date}T12:00`).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+        setText('trends-hint', `Articles les plus consultés le ${day} (Wikipédia en français).`);
+    } catch (e) {
+        console.error('Tendances:', e);
+        box.innerHTML = '<div class="empty">Indisponible pour le moment.</div>';
+    }
+}
+
+// ============ PROCHAINS LANCEMENTS DE FUSÉES ============
+const LAUNCH_STATUS = { Go: 'Prévu', TBC: 'À confirmer', TBD: 'Date non définie', Hold: 'Suspendu', 'In Flight': 'En vol', Success: 'Réussi', Failure: 'Échec', 'Partial Failure': 'Échec partiel' };
+
+async function loadLaunches() {
+    const box = $('#launch-list');
+    try {
+        const list = (await api('launches')).launches;
+        box.innerHTML = list.length ? list.map((l) => {
+            const d = l.net ? new Date(l.net) : null;
+            const when = d ? d.toLocaleString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Date inconnue';
+            const n = d ? daysTo(d) : null;
+            const detail = [when, LAUNCH_STATUS[l.status] || l.status, l.place].filter(Boolean).join(' · ');
+            return `<div class="row"><div>${esc(l.name)}<small>${esc(detail)}</small></div><span class="mono">${n == null ? '' : whenLabel(n)}</span></div>`;
+        }).join('') : '<div class="empty">Aucun lancement annoncé.</div>';
+    } catch (e) {
+        console.error('Lancements:', e);
+        box.innerHTML = '<div class="empty">Indisponible pour le moment.</div>';
+    }
+}
+
+// ============ ÉCHELLE DE BEAUFORT ============
+const BEAUFORT = [[1, 'Calme'], [6, 'Très légère brise'], [12, 'Légère brise'], [20, 'Petite brise'], [29, 'Jolie brise'], [39, 'Bonne brise'],
+[50, 'Vent frais'], [62, 'Grand frais'], [75, 'Coup de vent'], [89, 'Fort coup de vent'], [103, 'Tempête'], [118, 'Violente tempête'], [Infinity, 'Ouragan']];
+const beaufort = (kmh) => { const i = BEAUFORT.findIndex(([max]) => kmh < max); return `Force ${i} · ${BEAUFORT[i][1]}`; };
+
+function nextPhaseDate(age, target) { // prochaine pleine lune (target 14,77 j) ou nouvelle lune (0)
+    const synodic = 29.530588853, days = (((target - age) % synodic) + synodic) % synodic;
+    return new Date(Date.now() + days * 864e5).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
 }
 
 // ============ INITIALISATION ============
@@ -1498,7 +1463,7 @@ function init() {
     initDevice();
     initTheme();
     initClocks();
-    initTools();
+    initTimers();
     renderSun(); every(3600e3, renderSun);
     initSearch();
     initBattery();
@@ -1521,6 +1486,10 @@ function init() {
     loadSchool(); every(6 * 3600e3, loadSchool);
     renderObservances(); every(3600e3, renderObservances);
     initWorld();
+    loadNews(); every(10 * 60e3, loadNews);
+    loadHistory(); every(6 * 3600e3, loadHistory);
+    loadTrends(); every(3600e3, loadTrends);
+    loadLaunches(); every(3600e3, loadLaunches);
     every(30 * 60e3, loadMarine);
     every(10 * 60e3, () => { loadWeather(); loadFuel(); });
     every(30 * 60e3, loadAir);
