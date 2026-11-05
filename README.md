@@ -44,7 +44,7 @@ cd live-info
 uv sync
 
 # Or with pip
-pip install flask requests
+pip install flask requests defusedxml
 ```
 
 ### Running the Web App
@@ -66,6 +66,13 @@ The app will be available at `http://localhost:5003`
 - Fuel prices, electricity and school holidays cover **France only** (school holidays: metropolitan zones A/B/C).
 - Don't run Flask's dev server in production: use something like `gunicorn -b 127.0.0.1:5003 app:app` behind a reverse proxy.
 
+## Security Notes
+
+- The app only listens on `127.0.0.1`: serve it through a reverse proxy with HTTPS (nginx, Caddy…) that forwards `X-Forwarded-For` and `X-Forwarded-Proto`. Never expose it directly to the Internet.
+- Built-in protections: strict Content-Security-Policy and other security headers, per-IP rate limiting on `/api` (240 requests/min), input validation, safe XML parsing and generic error messages.
+- No accounts, database or secrets: the server only proxies public APIs. Leaflet is self-hosted, so no third-party scripts are loaded.
+- Keep dependencies up to date (`uv lock --upgrade`, `pip-audit`).
+
 ## Project Structure
 
 ```
@@ -74,7 +81,9 @@ templates/
 └── index.html
 static/
 ├── css/style.css
-└── js/app.js
+├── js/app.js
+├── js/theme-init.js
+└── vendor/leaflet/      # Leaflet 1.9.4, self-hosted
 ```
 
 ## Data Sources
@@ -97,7 +106,7 @@ static/
 [Wikimedia](https://api.wikimedia.org/) (history, trends) ·
 [The Space Devs](https://thespacedevs.com/) (launches) ·
 [Cloudflare Speed Test](https://speed.cloudflare.com/) ·
-[Leaflet](https://leafletjs.com/) with [OpenStreetMap France](https://www.openstreetmap.fr/) tiles (© OpenStreetMap contributors).
+[Leaflet](https://leafletjs.com/) (BSD-2, self-hosted) with [OpenStreetMap France](https://www.openstreetmap.fr/) tiles (© OpenStreetMap contributors).
 
 ## License
 

@@ -5,16 +5,65 @@ The server is a cached proxy to public APIs that need no key.
 import math
 import re
 import time
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import requests
+from defusedxml import ElementTree as ET  # analyse XML sûre (pas d'entités externes ni d'explosion d'entités)
+from defusedxml.common import DefusedXmlException
 from flask import Flask, jsonify, render_template, request
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 app = Flask(__name__)
+# Derrière un reverse proxy local (nginx, Caddy…) : on lit l'IP réelle et le schéma (https) dans X-Forwarded-*.
+# Sûr uniquement parce que l'application n'écoute que sur 127.0.0.1 : ne jamais l'exposer directement sur Internet.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+       "font-src https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' https://speed.cloudflare.com; "
+       "object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+
+
+@app.after_request
+def security_headers(resp):
+    resp.headers["Content-Security-Policy"] = CSP
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    resp.headers["Permissions-Policy"] = "geolocation=(self), camera=(), microphone=(), payment=(), usb=()"
+    if request.is_secure:
+        resp.headers["Strict-Transport-Security"] = "max-age=31536000"
+    return resp
+
+
+RATE_LIMIT = 240  # requêtes /api par minute et par adresse IP (protège aussi les APIs externes qu'on interroge)
+_hits = {}
+
+
+@app.before_request
+def rate_limit():
+    if not request.path.startswith("/api/"):
+        return None
+    now = time.time()
+    ip = request.remote_addr or "?"
+    recent = [t for t in _hits.get(ip, []) if now - t < 60]
+    if len(recent) >= RATE_LIMIT:
+        return jsonify({"error": "Trop de requêtes, réessayez dans une minute."}), 429
+    recent.append(now)
+    _hits[ip] = recent
+    if len(_hits) > 5000:  # évite que la table grossisse indéfiniment
+        for k in [k for k, v in _hits.items() if not v or now - v[-1] > 60]:
+            del _hits[k]
+    return None
+
+
+def upstream_error(e):
+    """Réponse générique : on ne renvoie pas le détail de l'erreur (noms d'hôtes, chemins…) au client."""
+    app.logger.warning("Source externe en échec : %s", e)
+    return jsonify({"error": "Source de données indisponible pour le moment"}), 502
+
 
 session = requests.Session()
 session.headers["User-Agent"] = "live-info/2.0 (https://github.com/WewennJr/live-info)"
@@ -68,7 +117,7 @@ def proxy(url, params, ttl):
     try:
         return jsonify(cached_get(url, params, ttl))
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
 
 
 def get_coords(digits):
@@ -137,8 +186,8 @@ def air():
 @app.route("/api/geocode")
 def geocode():
     q = request.args.get("q", "").strip()
-    if len(q) < 2:
-        return jsonify({"error": "Requête trop courte"}), 400
+    if not 2 <= len(q) <= 100:
+        return jsonify({"error": "La recherche doit faire entre 2 et 100 caractères"}), 400
     return proxy(GEOCODING, {"name": q, "count": 5, "language": "fr", "format": "json"}, ttl=3600)
 
 
@@ -163,7 +212,7 @@ def fuel():
     try:
         data = cached_get(FUEL_API, params, ttl=600)
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
 
     results = data.get("results", [])
     stations = []
@@ -192,7 +241,7 @@ def quakes():
     try:
         data = cached_get(USGS_QUAKES, {}, ttl=300)
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     out = []
     for f in data.get("features", [])[:10]:
         p, (lon, lat, depth) = f["properties"], f["geometry"]["coordinates"]
@@ -224,7 +273,7 @@ def space():
             kp.append({"time": r.get("time_tag"), "kp": float(v)})
         return jsonify({"kp": kp})
     except (requests.RequestException, ValueError, TypeError, AttributeError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
 
 
 @app.route("/api/markets")
@@ -269,7 +318,7 @@ def commune():
         data = cached_get(GEO_COMMUNES, {"lat": c[0], "lon": c[1], "format": "json",
                                          "fields": "nom,code,codesPostaux,population,surface,departement,region"}, ttl=86400)
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     if not data:
         return jsonify({"error": "Aucune commune française à cet endroit"}), 404
     return jsonify(data[0])
@@ -280,8 +329,8 @@ def commune():
 def news():
     try:
         root = ET.fromstring(cached_get(NEWS_RSS, {}, ttl=600, raw=True))
-    except (requests.RequestException, ET.ParseError) as e:
-        return jsonify({"error": str(e)}), 502
+    except (requests.RequestException, ET.ParseError, DefusedXmlException) as e:
+        return upstream_error(e)
     items = []
     for it in root.iter("item"):
         title, link, pub = (it.findtext(k) for k in ("title", "link", "pubDate"))
@@ -304,7 +353,7 @@ def history():
     try:
         data = cached_get(f"{WIKI_FEED}/onthisday/selected/{today:%m}/{today:%d}", {}, ttl=43200)
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     events = sorted(data.get("selected") or data.get("events") or [], key=lambda e: e.get("year", 0), reverse=True)
     picked = [events[i * len(events) // 5] for i in range(5)] if len(events) > 5 else events  # répartis dans le temps
     out = []
@@ -359,7 +408,7 @@ def climate():
         }, ttl=86400)
         d = data["daily"]
     except (requests.RequestException, ValueError, KeyError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     wanted = set()  # fenêtre de ±3 jours autour de la date du jour, pour chacune des 10 années
     for yr in range(today.year - 10, today.year):
         try:
@@ -382,7 +431,7 @@ def launches():
     try:
         data = cached_get(LAUNCHES, {"limit": 5}, ttl=3600)  # l'API limite à ~15 requêtes/heure
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     out = []
     for item in data.get("results", []):
         pad = item.get("pad") or {}
@@ -414,7 +463,7 @@ def power():
         if not rec:
             raise ValueError("aucune donnée")
     except (requests.RequestException, ValueError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     sources = ["nucleaire", "eolien", "solaire", "hydraulique", "gaz", "charbon", "fioul", "bioenergies"]
     mix = {k: max(0, rec.get(k) or 0) for k in sources}
     return jsonify({"time": rec.get("date_heure"), "consommation": rec.get("consommation"),
@@ -454,7 +503,7 @@ def school_holidays():
                 key = (rec["description"], start.isoformat(), end.isoformat())
                 merged.setdefault(key, []).append(zone)
     except (requests.RequestException, ValueError, KeyError) as e:
-        return jsonify({"error": str(e)}), 502
+        return upstream_error(e)
     rows = [{"name": n, "start": s_, "end": e_, "zones": z} for (n, s_, e_), z in sorted(merged.items(), key=lambda kv: kv[0][1])]
     return jsonify({"holidays": rows[:6]})
 

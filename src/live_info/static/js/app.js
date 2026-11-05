@@ -239,7 +239,7 @@ function renderNowcast(d) {
         return setText('nowcast-summary', 'Prévision à 15 min indisponible ici');
     }
     const max = Math.max(1, ...vals.map((v) => v || 0));
-    bars.innerHTML = vals.map((v) => `<div style="height:${Math.max(4, ((v || 0) / max) * 100)}%" title="${v || 0} mm"></div>`).join('');
+    bars.innerHTML = vals.map((v) => `<div style="height:${Math.max(4, ((v || 0) / max) * 100)}%" title="${Number(v) || 0} mm"></div>`).join('');
     const first = vals.findIndex((v) => (v || 0) >= 0.1);
     let msg;
     if (first === -1) msg = '☀️ Pas de pluie prévue dans les 2 h';
@@ -263,7 +263,7 @@ function renderHourly(d, hi) {
     const marks = t.map((v, i) => i % 3 ? '' :
         `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="3.5" fill="var(--accent)"/>` +
         `<text x="${x(i).toFixed(1)}" y="${(y(v) - 9).toFixed(1)}" text-anchor="middle">${round(v)}°</text>` +
-        `<text x="${x(i).toFixed(1)}" y="176" text-anchor="middle">${hm(times[i])}</text>`).join('');
+        `<text x="${x(i).toFixed(1)}" y="176" text-anchor="middle">${esc(hm(times[i]))}</text>`).join('');
     $('#hourly-chart').innerHTML =
         `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Température et probabilité de pluie sur 24 heures">${bars}<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/>${marks}</svg>`;
 }
@@ -274,7 +274,7 @@ function renderDaily(d) {
         const name = i === 0 ? "Auj." : new Date(`${date}T12:00`).toLocaleDateString('fr-FR', { weekday: 'short' });
         return `<div class="day"><div class="day-name">${esc(name)}</div><div class="day-icon">${wmoIcon(dl.weather_code[i])}</div>` +
             `<div class="day-temp">${round(dl.temperature_2m_max[i])}° <span>${round(dl.temperature_2m_min[i])}°</span></div>` +
-            `<div class="day-rain">💧 ${dl.precipitation_probability_max[i] ?? 0}% · ${dl.precipitation_sum[i]} mm</div></div>`;
+            `<div class="day-rain">💧 ${Number(dl.precipitation_probability_max[i]) || 0}% · ${Number(dl.precipitation_sum[i]) || 0} mm</div></div>`;
     }).join('');
 }
 
@@ -356,7 +356,7 @@ async function loadFuel() {
         if (seq !== state.locSeq) return;
         const rows = Object.entries(d.best);
         $('#fuel-list').innerHTML = rows.length
-            ? rows.map(([k, s]) => `<div class="row"><div><strong>${FUEL_NAMES[k]}</strong><small>${esc(s.ville)} · ${esc(s.adresse)} · ${s.dist_km} km</small></div><span class="mono">${Number(s.prix).toFixed(3)} €</span></div>`).join('')
+            ? rows.map(([k, s]) => `<div class="row"><div><strong>${esc(FUEL_NAMES[k] || k)}</strong><small>${esc(s.ville)} · ${esc(s.adresse)} · ${s.dist_km} km</small></div><span class="mono">${Number(s.prix).toFixed(3)} €</span></div>`).join('')
             : '<div class="empty">Aucune station trouvée (France uniquement).</div>';
         setText('fuel-hint', `${d.count} stations dans ${d.radius_km} km${d.truncated ? ' (liste tronquée à 100)' : ''}.`);
         setStatus('fuel', rows.length ? 'ok' : 'warn', rows.length ? 'OK' : 'Aucune');
